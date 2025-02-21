@@ -507,6 +507,12 @@ class ModernTorqueApp(QMainWindow):
             })
         if summary_data:
             df = pd.DataFrame(summary_data)
+            # Parse the "Allowance Range" string to extract the lower bound for sorting
+            df['LowerBound'] = df['Allowance Range'].apply(lambda x: float(x.split('-')[0].strip()) if '-' in x else 0)
+            # Sort by the lower bound in descending order (highest range on top)
+            df = df.sort_values(by='LowerBound', ascending=False)
+            # Remove the temporary column before export
+            df.drop(columns=['LowerBound'], inplace=True)
             try:
                 df.to_excel("summary.xlsx", index=False)
                 QMessageBox.information(self, "Export Summary", "Summary exported successfully to summary.xlsx")
