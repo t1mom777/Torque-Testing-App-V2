@@ -44,9 +44,10 @@ class SerialReaderWorker(QThread):
             fits = find_fits_in_selected_row(target_torque, self.selected_row)
             if fits:
                 print(f"[DEBUG] torque {target_torque} fits in ranges: {fits}")
-                self.reading_signal.emit(target_torque, fits)
             else:
                 print(f"[DEBUG] torque {target_torque} did NOT fit any range")
+            # Always emit the reading, even if no allowance match is found
+            self.reading_signal.emit(target_torque, fits)
 
         try:
             print(f"[DEBUG] Starting serial read on {self.port} at {BAUD_RATE} baud...")
@@ -355,6 +356,11 @@ class ModernTorqueApp(QMainWindow):
         form_layout.addWidget(self.stop_btn, 4, 1)
 
         layout.addLayout(form_layout)
+        
+        # Add a live torque label to display the current reading
+        self.live_torque_label = QLabel("Live Torque: --")
+        self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
+        layout.addWidget(self.live_torque_label)
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(7)
@@ -451,7 +457,14 @@ class ModernTorqueApp(QMainWindow):
         print("[DEBUG] Test stopped. Results by range =>", self.results_by_range)
 
     def process_reading(self, target_torque, fits):
-        print(f"[DEBUG] process_reading => torque: {target_torque}, fits: {fits}")
+        # Update the live torque cell with the current reading
+        self.live_torque_label.setText(f"Live Torque: {target_torque}")
+        if fits:
+            self.live_torque_label.setStyleSheet("background-color: green; color: white; font-size: 16px; padding: 5px;")
+        else:
+            self.live_torque_label.setStyleSheet("background-color: red; color: white; font-size: 16px; padding: 5px;")
+
+        # Process each fit (if any) for summary updates
         for fit in fits:
             allowance_key = fit.get('range_str', "")
             current_results = self.results_by_range.get(allowance_key, [])
