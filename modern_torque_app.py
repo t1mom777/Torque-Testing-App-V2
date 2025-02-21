@@ -1,4 +1,5 @@
 import os
+import re  # For extracting numeric part from max torque text
 import json
 import threading
 import pandas as pd
@@ -14,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# Import your DB handler (DuckDB or otherwise)
+# Import your DB handler (DuckDB-based) and serial reader
 from db_handler_local import (
     get_torque_table, insert_raw_data, insert_summary,
     add_torque_entry, update_torque_entry, delete_torque_entry
@@ -36,53 +37,60 @@ class SerialReaderWorker(QThread):
         BAUD_RATE = 9600
 
         def callback(target_torque):
+            # Debug: print the torque value as it arrives
+            print(f"[DEBUG] Serial callback received torque: {target_torque}")
             if self.stop_event.is_set():
                 return
             fits = find_fits_in_selected_row(target_torque, self.selected_row)
             if fits:
+                print(f"[DEBUG] torque {target_torque} fits in ranges: {fits}")
                 self.reading_signal.emit(target_torque, fits)
+            else:
+                print(f"[DEBUG] torque {target_torque} did NOT fit any range")
 
         try:
+            print(f"[DEBUG] Starting serial read on {self.port} at {BAUD_RATE} baud...")
             read_from_serial(self.port, BAUD_RATE, callback, self.stop_event)
         except Exception as e:
-            print("Error in serial reading:", e)
+            print("[DEBUG] Error in serial reading:", e)
 
     def stop(self):
+        print("[DEBUG] stop_event set. Stopping serial reading.")
         self.stop_event.set()
 
 
 # ---------------- Helper Functions ----------------
 def calc_applied_torques(max_torque: float) -> list[float]:
     """
-    Multiply max_torque by 0.916, 0.583, 0.333, rounding each result to the nearest 10.
-    Returns a list of three numeric values, e.g. [550, 350, 200].
+    Multiply max_torque by 0.916, 0.583, and 0.333,
+    rounding each result to the nearest 10.
+    Returns a list of three numeric values.
     """
     factors = [0.916, 0.583, 0.333]
     results = []
     for f in factors:
         raw_val = max_torque * f
-        # Round to nearest 10
         rounded = round(raw_val / 10) * 10
         results.append(rounded)
+    print(f"[DEBUG] calc_applied_torques({max_torque}) => {results}")
     return results
 
 def calc_allowance_range(applied_val: float) -> str:
     """
-    Common approach for torque wrenches:
-      - ±6% if applied_val < 10
-      - ±4% otherwise
-    Round to one decimal place. Example:
-      If applied_val=100 => ±4 => [96..104] => '96.0 - 104.0'
+    Calculate the allowance range.
+      - Use ±6% if applied_val < 10,
+      - Otherwise, use ±4%.
+    Round each boundary to one decimal.
     """
     if applied_val < 10:
-        tolerance = 0.06  # ±6%
+        tolerance = 0.06
     else:
-        tolerance = 0.04  # ±4%
+        tolerance = 0.04
     low = applied_val * (1 - tolerance)
     high = applied_val * (1 + tolerance)
-    low_rounded = round(low, 1)
-    high_rounded = round(high, 1)
-    return f"{low_rounded} - {high_rounded}"
+    range_str = f"{round(low,1)} - {round(high,1)}"
+    print(f"[DEBUG] calc_allowance_range({applied_val}) => {range_str}")
+    return range_str
 
 
 # ---------------- Dialog for Adding/Editing a Torque Entry ----------------
@@ -97,15 +105,10 @@ class TorqueEntryDialog(QDialog):
     def init_ui(self):
         layout = QFormLayout(self)
 
-        # Fields
         self.max_torque_edit = QLineEdit(str(self.entry_data.get("max_torque", "")))
         self.unit_edit = QLineEdit(self.entry_data.get("unit", ""))
         self.type_edit = QLineEdit(self.entry_data.get("type", ""))
-
-        # "applied_torq" will hold a JSON array of up to 3 suggested torques
         self.applied_torq_edit = QLineEdit(self.entry_data.get("applied_torq", ""))
-
-        # 3 allowance fields
         self.allowance1_edit = QLineEdit(self.entry_data.get("allowance1", ""))
         self.allowance2_edit = QLineEdit(self.entry_data.get("allowance2", ""))
         self.allowance3_edit = QLineEdit(self.entry_data.get("allowance3", ""))
@@ -118,11 +121,9 @@ class TorqueEntryDialog(QDialog):
         layout.addRow("Allowance 2:", self.allowance2_edit)
         layout.addRow("Allowance 3:", self.allowance3_edit)
 
-        # Connect signals:
-        # 1) If Max Torque changes => recalc "applied_torq" + allowances
+        # When Max Torque changes, extract numeric part and update applied torques and allowances.
         self.max_torque_edit.textChanged.connect(self.auto_fill_applied_from_max)
-
-        # 2) If the user edits "applied_torq" JSON directly => recalc allowances
+        # If user edits the applied torque JSON directly, recalc allowances.
         self.applied_torq_edit.textChanged.connect(self.auto_fill_allowances_from_applied)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -130,42 +131,53 @@ class TorqueEntryDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
 
-    # ------------- If Max Torque changes -------------
     def auto_fill_applied_from_max(self):
+        """
+        Extract the numeric portion from the Max Torque field (ignoring unit text),
+        calculate three applied torques, and update the JSON field and allowances.
+        """
         txt = self.max_torque_edit.text().strip()
         if not txt:
+            print("[DEBUG] Max Torque field is empty.")
             return
-        try:
-            max_torque = float(txt)
-        except ValueError:
+        # Use regex to extract the first numeric value (integer or float)
+        match = re.search(r"[\d\.]+", txt)
+        if match:
+            try:
+                max_torque = float(match.group())
+                print(f"[DEBUG] Extracted numeric max_torque from '{txt}' => {max_torque}")
+            except ValueError:
+                print(f"[DEBUG] Could not convert '{match.group()}' to float.")
+                return
+        else:
+            print(f"[DEBUG] No numeric portion found in '{txt}'")
             return
 
-        # 1) Calculate 3 applied torques
-        applied_list = calc_applied_torques(max_torque)  # e.g. [550, 350, 200]
-        # 2) Convert to JSON
-        self.applied_torq_edit.blockSignals(True)  # avoid infinite loop
+        applied_list = calc_applied_torques(max_torque)
+        # Temporarily block signals to avoid re-triggering textChanged
+        self.applied_torq_edit.blockSignals(True)
         self.applied_torq_edit.setText(json.dumps(applied_list))
         self.applied_torq_edit.blockSignals(False)
 
-        # 3) Update allowances
         self.auto_fill_allowances_from_applied()
 
-    # ------------- If "applied_torq" JSON changes -------------
     def auto_fill_allowances_from_applied(self):
         """
-        Parse the JSON array from self.applied_torq_edit, recalc allowances for each of the first 3 values.
+        Parse the JSON from the applied torque field and update allowances accordingly.
         """
         txt = self.applied_torq_edit.text().strip()
         if not txt:
+            print("[DEBUG] Applied Torque (JSON) field is empty.")
             return
         try:
             arr = json.loads(txt)
             if not isinstance(arr, list):
+                print(f"[DEBUG] '{txt}' is not a JSON list.")
                 return
         except (ValueError, json.JSONDecodeError):
+            print(f"[DEBUG] Could not parse JSON from '{txt}'.")
             return
 
-        # For each of the first 3 items, compute allowance
         for i in range(3):
             val = arr[i] if i < len(arr) else 0
             allow_str = calc_allowance_range(val)
@@ -196,7 +208,6 @@ class ModernTorqueApp(QMainWindow):
         self.setGeometry(100, 100, 950, 650)
         self.setStyleSheet(self.load_stylesheet())
 
-        # Application state
         self.results_by_range = {}
         self.customer_info = {}
         self.serial_worker = None
@@ -345,7 +356,6 @@ class ModernTorqueApp(QMainWindow):
 
         layout.addLayout(form_layout)
 
-        # Tree to display test results
         self.tree = QTreeWidget()
         self.tree.setColumnCount(7)
         self.tree.setHeaderLabels([
@@ -380,23 +390,25 @@ class ModernTorqueApp(QMainWindow):
             return
         self.selected_row = self.torque_table[index]
         self.results_by_range = {}
+        print(f"[DEBUG] on_torque_combo_selected => selected_row: {self.selected_row}")
         self.display_pre_test_rows()
 
     def display_pre_test_rows(self):
         self.tree.clear()
         if not self.selected_row:
+            print("[DEBUG] No selected row in display_pre_test_rows.")
             return
         try:
             applied_arr = json.loads(self.selected_row.get("applied_torq", "[]"))
         except json.JSONDecodeError:
             applied_arr = [0, 0, 0]
+        print(f"[DEBUG] display_pre_test_rows => applied_torq array: {applied_arr}")
         for i in range(3):
             allowance_key = self.selected_row.get(f"allowance{i+1}", "")
             applied_val = applied_arr[i] if i < len(applied_arr) else 0
-            test_values = self.results_by_range.get(allowance_key, [])
-            row_values = [str(applied_val), allowance_key] + [str(v) for v in test_values]
-            while len(row_values) < 7:
-                row_values.append("")
+            row_values = [str(applied_val), allowance_key]
+            # We don't yet have test values until the user does a test
+            row_values += [""] * 5
             item = QTreeWidgetItem(row_values)
             self.tree.addTopLevelItem(item)
 
@@ -410,11 +422,13 @@ class ModernTorqueApp(QMainWindow):
 
         self.selected_row = self.torque_table[self.torque_combo.currentIndex()]
         self.results_by_range = {}
+        print("[DEBUG] start_test => selected row:", self.selected_row)
         self.display_pre_test_rows()
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.statusBar.showMessage("Test in progress...")
+        print("[DEBUG] Test started.")
 
         port = self.port_combo.currentText()
         self.serial_worker = SerialReaderWorker(port, self.selected_row)
@@ -422,6 +436,7 @@ class ModernTorqueApp(QMainWindow):
         self.serial_worker.start()
 
     def stop_test(self):
+        print("[DEBUG] stop_test called.")
         if self.serial_worker:
             self.serial_worker.stop()
             self.serial_worker.wait(2000)
@@ -433,8 +448,10 @@ class ModernTorqueApp(QMainWindow):
 
         self.statusBar.showMessage("Test ended. Summary updated.")
         QMessageBox.information(self, "Test Completed", "Test ended and summary updated.")
+        print("[DEBUG] Test stopped. Results by range =>", self.results_by_range)
 
     def process_reading(self, target_torque, fits):
+        print(f"[DEBUG] process_reading => torque: {target_torque}, fits: {fits}")
         for fit in fits:
             allowance_key = fit.get('range_str', "")
             current_results = self.results_by_range.get(allowance_key, [])
@@ -449,6 +466,7 @@ class ModernTorqueApp(QMainWindow):
         self.update_summary_table()
 
     def update_summary_table(self):
+        print("[DEBUG] update_summary_table => results_by_range:", self.results_by_range)
         self.tree.clear()
         if not self.selected_row:
             return
@@ -469,9 +487,11 @@ class ModernTorqueApp(QMainWindow):
             insert_summary(allowance_key, actual_numbers)
 
     def save_final_summary(self):
+        print("[DEBUG] save_final_summary => Called. (placeholder logic)")
         print("Final summary saved to database (placeholder).")
 
     def export_summary_to_excel(self):
+        print("[DEBUG] export_summary_to_excel => Called.")
         summary_data = []
         for allow_range, results in self.results_by_range.items():
             valid_results = [r for r in results if isinstance(r, (float, int))]
@@ -490,24 +510,30 @@ class ModernTorqueApp(QMainWindow):
             try:
                 df.to_excel("summary.xlsx", index=False)
                 QMessageBox.information(self, "Export Summary", "Summary exported successfully to summary.xlsx")
+                print("[DEBUG] Summary exported to summary.xlsx.")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Error exporting to Excel:\n{e}")
+                print("[DEBUG] Error exporting to Excel:", e)
         else:
             QMessageBox.warning(self, "Export Warning", "No summary data available to export.")
+            print("[DEBUG] No summary data available to export.")
 
     def upload_customer_info(self):
+        print("[DEBUG] upload_customer_info => Called.")
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
             "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
         )
         if not file_path:
+            print("[DEBUG] No file selected for OCR.")
             return
         try:
             image = Image.open(file_path)
             ocr_text = pytesseract.image_to_string(image)
-            print("OCR Text:", ocr_text)
+            print("[DEBUG] OCR Text:", ocr_text)
         except Exception as e:
             QMessageBox.critical(self, "OCR Error", f"Error processing image: {e}")
+            print("[DEBUG] Error processing image for OCR:", e)
             return
 
         self.customer_info = {}
@@ -535,9 +561,10 @@ class ModernTorqueApp(QMainWindow):
                     self.customer_info["serial"] = value
         if self.customer_info:
             self.statusBar.showMessage("Customer info imported.")
-            print("Customer Info:", self.customer_info)
+            print("[DEBUG] Customer Info parsed =>", self.customer_info)
         else:
             self.statusBar.showMessage("No recognizable customer info found.")
+            print("[DEBUG] No recognizable customer info found in OCR text.")
 
     # ---------------- Data Management Tab ----------------
     def init_data_management_tab(self):
@@ -572,6 +599,7 @@ class ModernTorqueApp(QMainWindow):
         self.load_torque_table_data()
 
     def load_torque_table_data(self):
+        print("[DEBUG] load_torque_table_data => Called.")
         table_data = get_torque_table()
         self.torque_table_widget.setRowCount(len(table_data))
         for i, row in enumerate(table_data):
@@ -580,11 +608,14 @@ class ModernTorqueApp(QMainWindow):
             self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
             self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
         self.torque_table_widget.resizeColumnsToContents()
+        print("[DEBUG] Torque table loaded with", len(table_data), "rows.")
 
     def add_entry(self):
+        print("[DEBUG] add_entry => Called.")
         dialog = TorqueEntryDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
+            print("[DEBUG] add_entry => dialog returned data:", data)
             add_torque_entry(
                 data["max_torque"], data["unit"], data["type"],
                 data["applied_torq"], data["allowance1"],
@@ -595,16 +626,20 @@ class ModernTorqueApp(QMainWindow):
             self.refresh_torque_dropdown()
 
     def edit_entry(self):
+        print("[DEBUG] edit_entry => Called.")
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select an entry to edit.")
+            print("[DEBUG] No selection for editing.")
             return
         row = self.torque_table_widget.currentRow()
         table_data = get_torque_table()
         entry = table_data[row]
+        print("[DEBUG] edit_entry => current entry:", entry)
         dialog = TorqueEntryDialog(self, entry)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
+            print("[DEBUG] edit_entry => updated data:", data)
             update_torque_entry(
                 entry["id"], data["max_torque"], data["unit"], data["type"],
                 data["applied_torq"], data["allowance1"], data["allowance2"], data["allowance3"]
@@ -614,9 +649,11 @@ class ModernTorqueApp(QMainWindow):
             self.refresh_torque_dropdown()
 
     def delete_entry(self):
+        print("[DEBUG] delete_entry => Called.")
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select an entry to delete.")
+            print("[DEBUG] No selection for deleting.")
             return
         row = self.torque_table_widget.currentRow()
         table_data = get_torque_table()
@@ -626,6 +663,7 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if confirm == QMessageBox.StandardButton.Yes:
+            print(f"[DEBUG] Deleting entry ID {entry['id']}")
             delete_torque_entry(entry["id"])
             QMessageBox.information(self, "Success", "Entry deleted successfully.")
             self.load_torque_table_data()
@@ -644,6 +682,7 @@ class ModernTorqueApp(QMainWindow):
         self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
 
     def open_template_editor(self):
+        print("[DEBUG] open_template_editor => Called.")
         from template_editor import TemplateEditor
         self.template_editor = TemplateEditor()
         self.template_editor.show()
