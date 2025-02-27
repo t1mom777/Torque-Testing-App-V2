@@ -4,7 +4,7 @@ from db_handler_local import init_db, insert_default_torque_table_data
 from modern_torque_app import ModernTorqueApp
 
 def main():
-    # Initialize DuckDB with no constraints, then insert default data
+    # Initialize the database and insert default data.
     init_db()
     insert_default_torque_table_data()
     

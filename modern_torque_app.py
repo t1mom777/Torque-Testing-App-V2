@@ -4,20 +4,18 @@ import json
 import threading
 import pandas as pd
 import serial.tools.list_ports
-from PIL import Image
-import pytesseract
-import openai
+import openai, base64
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
     QComboBox, QPushButton, QTableWidget, QHeaderView,
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
-    QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog, QDateEdit
+    QMessageBox, QFileDialog, QDateEdit
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate
 
-# Import DB handler (which includes get_app_setting/set_app_setting)
+# Import DB handler functions
 from db_handler_local import (
     get_torque_table, insert_raw_data, insert_summary,
     add_torque_entry, update_torque_entry, delete_torque_entry,
@@ -45,9 +43,9 @@ class SerialReaderWorker(QThread):
                 return
             fits = find_fits_in_selected_row(target_torque, self.selected_row)
             if fits:
-                print(f"[DEBUG] torque {target_torque} fits in ranges: {fits}")
+                print(f"[DEBUG] Torque {target_torque} fits in ranges: {fits}")
             else:
-                print(f"[DEBUG] torque {target_torque} did NOT fit any range")
+                print(f"[DEBUG] Torque {target_torque} did NOT fit any range")
             self.reading_signal.emit(target_torque, fits)
 
         try:
@@ -72,10 +70,7 @@ def calc_applied_torques(max_torque: float) -> list[float]:
     return results
 
 def calc_allowance_range(applied_val: float) -> str:
-    if applied_val < 10:
-        tolerance = 0.06
-    else:
-        tolerance = 0.04
+    tolerance = 0.06 if applied_val < 10 else 0.04
     low = applied_val * (1 - tolerance)
     high = applied_val * (1 + tolerance)
     return f"{round(low,1)} - {round(high,1)}"
@@ -182,19 +177,11 @@ class ModernTorqueApp(QMainWindow):
         self.serial_worker = None
         self.selected_row = None
 
-        # OpenAI settings (in memory defaults)
-        self.openai_api_key = None
-        self.openai_model = "gpt-4-turbo"
-        self.openai_temperature = 0.7
-        self.openai_top_p = 1.0
-        self.openai_presence_penalty = 0.0
-        self.openai_frequency_penalty = 0.0
-        self.ocr_engine = "Tesseract"
-
-        # Load saved API key from DB
-        saved_key = get_app_setting("openai_api_key")
-        if saved_key:
-            self.openai_api_key = saved_key
+        # Retrieve stored OpenAI API key and model (if any)
+        self.openai_api_key = get_app_setting("openai_api_key")
+        self.openai_model = get_app_setting("openai_model")
+        if not self.openai_model:
+            self.openai_model = "gpt-4-turbo"  # default placeholder model name
 
         self.setStyleSheet(self.load_stylesheet())
         self.init_ui()
@@ -293,7 +280,7 @@ class ModernTorqueApp(QMainWindow):
 
         self.init_testing_tab()
         self.init_settings_tab()
-        self.init_report_templates_tab()
+        # (Report Templates tab removed)
 
     # ---------------- Torque Testing Tab ----------------
     def init_testing_tab(self):
@@ -391,13 +378,14 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-        self.upload_info_btn = QPushButton("Import Customer Info")
-        self.upload_info_btn.clicked.connect(self.upload_customer_info)
-        btn_layout.addWidget(self.upload_info_btn)
-
         self.export_excel_btn = QPushButton("Export Summary")
         self.export_excel_btn.clicked.connect(self.export_summary_to_excel)
         btn_layout.addWidget(self.export_excel_btn)
+
+        # ---------- Import Customer Info Button (New OCR) ----------
+        self.upload_info_btn = QPushButton("Import Customer Info")
+        self.upload_info_btn.clicked.connect(self.upload_customer_info)
+        btn_layout.addWidget(self.upload_info_btn)
 
         main_layout.addLayout(btn_layout)
 
@@ -533,107 +521,115 @@ class ModernTorqueApp(QMainWindow):
         else:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
 
-    # ---------------- OCR Import ----------------
+    # ---------------- OpenAI OCR and API Key / Model Settings ----------------
     def upload_customer_info(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image", "",
+            self, "Select Document Image", "",
             "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
         )
         if not file_path:
             return
-        if self.ocr_engine_combo.currentText() == "OpenAI GPT-4 Vision":
-            if not self.openai_api_key:
-                QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
-                return
-            ocr_text = self.ocr_with_openai_vision(file_path)
-            if not ocr_text:
-                QMessageBox.warning(self, "OpenAI OCR Failed", "No text extracted or error occurred.")
-                return
-        else:
-            try:
-                image = Image.open(file_path)
-                ocr_text = pytesseract.image_to_string(image)
-            except Exception as e:
-                QMessageBox.critical(self, "OCR Error", f"Error processing image: {e}")
-                return
-        self.parse_ocr_text(ocr_text)
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        ocr_data = self.ocr_with_openai(file_path)
+        if not ocr_data:
+            QMessageBox.warning(self, "OCR Failed", "No data extracted or an error occurred.")
+            return
+        self.fill_form_fields_with_ocr_data(ocr_data)
 
-    def parse_ocr_text(self, ocr_text):
-        for line in ocr_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                key = parts[0].strip().lower()
-                value = parts[1].strip()
-                if "manufacturer" in key:
-                    self.manufacturer_edit.setText(value)
-                elif "model" in key:
-                    self.model_edit.setText(value)
-                elif "serial" in key:
-                    self.serial_number_edit.setText(value)
-                elif "max" in key and "torque" in key:
-                    print("[DEBUG] OCR found max torque:", value)
-                elif "customer" in key:
-                    self.customer_edit.setText(value)
-                elif "phone" in key:
-                    self.phone_edit.setText(value)
-                elif "address" in key:
-                    self.address_edit.setText(value)
-                elif "calibration date" in key:
-                    # Optionally, parse and set calibration date
-                    pass
-                elif "calibration due" in key:
-                    pass
-                elif "unit" in key:
-                    self.unit_number_edit.setText(value)
-
-    def ocr_with_openai_vision(self, image_path: str) -> str:
-        """
-        Uses the new ChatCompletion API with file input to perform OCR with GPT-4 Vision.
-        Ensure you've run 'openai migrate' and are enrolled in GPT-4 Vision beta.
-        """
-        openai.api_key = self.openai_api_key
+    def ocr_with_openai(self, image_path: str) -> dict:
         try:
-            response = openai.ChatCompletion.create(
-                model=self.openai_model,
-                messages=[
-                    {"role": "system", "content": "You are an OCR assistant. Extract all text from the attached image."}
-                ],
-                file=open(image_path, "rb")
-            )
-            recognized_text = response.choices[0].message["content"]
-            return recognized_text
+            with open(image_path, "rb") as f:
+                img_bytes = f.read()
+            base64_img = base64.b64encode(img_bytes).decode("utf-8")
         except Exception as e:
-            print("[DEBUG] OpenAI Vision OCR error:", e)
-            return ""
+            print("Error reading image file:", e)
+            return {}
+        messages = [
+            {"role": "system", "content": (
+                "You are an OCR assistant. Extract the following fields from the image: "
+                "manufacturer, model, serial number, customer, phone, and address. "
+                "Return the result in valid JSON format with keys: 'manufacturer', 'model', 'serial', 'customer', 'phone', 'address'. "
+                "If a field is not found, omit it."
+            )},
+            {"role": "user", "content": f"[IMAGE data: data:image/png;base64,{base64_img}]"}
+        ]
+        try:
+            client = openai.OpenAI(api_key=self.openai_api_key)
+            response = client.chat.completions.create(
+                model=self.openai_model,
+                messages=messages,
+                max_tokens=300
+            )
+            result_text = response.choices[0].message.content
+            # Debug: Print the raw result from OpenAI
+            print("Raw OCR response:", result_text)
+            if not result_text.strip():
+                print("Empty response received from OpenAI API.")
+                return {}
+            try:
+                data = json.loads(result_text)
+            except json.JSONDecodeError as e:
+                print("JSON decode error:", e)
+                print("Response text was:", result_text)
+                return {}
+            return data
+        except Exception as e:
+            print("OpenAI OCR error:", e)
+            return {}
+
+    def fill_form_fields_with_ocr_data(self, data: dict):
+        # Fill only fields that are currently empty.
+        if "manufacturer" in data and not self.manufacturer_edit.text().strip():
+            self.manufacturer_edit.setText(data["manufacturer"])
+        if "model" in data and not self.model_edit.text().strip():
+            self.model_edit.setText(data["model"])
+        if "serial" in data and not self.serial_number_edit.text().strip():
+            self.serial_number_edit.setText(data["serial"])
+        if "customer" in data and not self.customer_edit.text().strip():
+            self.customer_edit.setText(data["customer"])
+        if "phone" in data and not self.phone_edit.text().strip():
+            self.phone_edit.setText(data["phone"])
+        if "address" in data and not self.address_edit.text().strip():
+            self.address_edit.setText(data["address"])
 
     # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
         self.settings_tab = QWidget()
         layout = QVBoxLayout(self.settings_tab)
 
-        self.settings_combo = QComboBox()
-        self.settings_combo.addItem("Data Management")
-        self.settings_combo.addItem("OpenAI Settings")
-        self.settings_combo.currentIndexChanged.connect(self.on_settings_combo_changed)
-        layout.addWidget(self.settings_combo)
+        # --- OpenAI API Key Settings ---
+        key_layout = QHBoxLayout()
+        self.api_key_edit = QLineEdit()
+        self.api_key_edit.setPlaceholderText("Enter OpenAI API Key")
+        if self.openai_api_key:
+            self.api_key_edit.setText(self.openai_api_key)
+        save_key_btn = QPushButton("Save API Key")
+        save_key_btn.clicked.connect(self.save_api_key)
+        key_layout.addWidget(self.api_key_edit)
+        key_layout.addWidget(save_key_btn)
+        layout.addLayout(key_layout)
 
-        self.settings_stacked = QStackedWidget()
-        layout.addWidget(self.settings_stacked)
+        # --- OpenAI Model Settings (Editable) ---
+        model_layout = QHBoxLayout()
+        self.model_edit = QLineEdit()
+        self.model_edit.setPlaceholderText("Enter OpenAI Model (e.g. gpt-4-turbo)")
+        self.model_edit.setText(self.openai_model)
+        save_model_btn = QPushButton("Save Model")
+        save_model_btn.clicked.connect(self.save_model)
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(save_model_btn)
+        layout.addLayout(model_layout)
 
-        # Data Management Page
-        self.data_management_page = QWidget()
-        dm_layout = QVBoxLayout(self.data_management_page)
-
+        # --- Data Management (Torque Table) ---
         self.torque_table_widget = QTableWidget()
         self.torque_table_widget.setColumnCount(4)
         self.torque_table_widget.setHorizontalHeaderLabels([
             "Max Torque", "Unit", "Type", "Applied Torque"
         ])
         self.torque_table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        dm_layout.addWidget(self.torque_table_widget)
+        layout.addWidget(self.torque_table_widget)
 
         btn_layout = QHBoxLayout()
         self.add_btn = QPushButton("Add Entry")
@@ -648,97 +644,22 @@ class ModernTorqueApp(QMainWindow):
         btn_layout.addWidget(self.edit_btn)
         btn_layout.addWidget(self.delete_btn)
         btn_layout.addWidget(self.refresh_btn)
-        dm_layout.addLayout(btn_layout)
+        layout.addLayout(btn_layout)
 
-        self.data_management_page.setLayout(dm_layout)
-        self.settings_stacked.addWidget(self.data_management_page)
-
-        # OpenAI Settings Page
-        self.openai_settings_page = QWidget()
-        openai_layout = QFormLayout(self.openai_settings_page)
-
-        self.api_key_edit = QLineEdit()
-        if self.openai_api_key:
-            self.api_key_edit.setText(self.openai_api_key)
-        openai_layout.addRow("OpenAI API Key:", self.api_key_edit)
-
-        self.model_combo = QComboBox()
-        self.model_combo.addItems([
-            "o1",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-turbo",
-            "o3",
-            "o3-mini"
-        ])
-        self.model_combo.setCurrentText(self.openai_model)
-        openai_layout.addRow("Model:", self.model_combo)
-
-        self.ocr_engine_combo = QComboBox()
-        self.ocr_engine_combo.addItems(["Tesseract", "OpenAI GPT-4 Vision"])
-        self.ocr_engine_combo.setCurrentText(self.ocr_engine)
-        openai_layout.addRow("OCR Engine:", self.ocr_engine_combo)
-
-        self.temp_spin = QDoubleSpinBox()
-        self.temp_spin.setRange(0.0, 2.0)
-        self.temp_spin.setSingleStep(0.1)
-        self.temp_spin.setValue(self.openai_temperature)
-        openai_layout.addRow("Temperature:", self.temp_spin)
-
-        self.top_p_spin = QDoubleSpinBox()
-        self.top_p_spin.setRange(0.0, 1.0)
-        self.top_p_spin.setSingleStep(0.1)
-        self.top_p_spin.setValue(self.openai_top_p)
-        openai_layout.addRow("Top P:", self.top_p_spin)
-
-        self.presence_spin = QDoubleSpinBox()
-        self.presence_spin.setRange(0.0, 2.0)
-        self.presence_spin.setSingleStep(0.1)
-        self.presence_spin.setValue(self.openai_presence_penalty)
-        openai_layout.addRow("Presence Penalty:", self.presence_spin)
-
-        self.freq_spin = QDoubleSpinBox()
-        self.freq_spin.setRange(0.0, 2.0)
-        self.freq_spin.setSingleStep(0.1)
-        self.freq_spin.setValue(self.openai_frequency_penalty)
-        openai_layout.addRow("Frequency Penalty:", self.freq_spin)
-
-        save_key_btn = QPushButton("Save OpenAI Settings")
-        save_key_btn.clicked.connect(self.save_openai_settings)
-        openai_layout.addWidget(save_key_btn)
-
-        self.settings_stacked.addWidget(self.openai_settings_page)
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
 
         self.load_torque_table_data()
 
-    def on_settings_combo_changed(self, index):
-        self.settings_stacked.setCurrentIndex(index)
-
-    def save_openai_settings(self):
+    def save_api_key(self):
         self.openai_api_key = self.api_key_edit.text().strip()
-        self.openai_model = self.model_combo.currentText()
-        self.ocr_engine = self.ocr_engine_combo.currentText()
-        self.openai_temperature = self.temp_spin.value()
-        self.openai_top_p = self.top_p_spin.value()
-        self.openai_presence_penalty = self.presence_spin.value()
-        self.openai_frequency_penalty = self.freq_spin.value()
-        if self.openai_api_key:
-            set_app_setting("openai_api_key", self.openai_api_key)
-        else:
-            set_app_setting("openai_api_key", "")
-        QMessageBox.information(self, "OpenAI Settings", "OpenAI settings saved in DB.")
+        set_app_setting("openai_api_key", self.openai_api_key)
+        QMessageBox.information(self, "Settings", "OpenAI API Key saved.")
 
-    def load_torque_table_data(self):
-        table_data = get_torque_table()
-        self.torque_table_widget.setRowCount(len(table_data))
-        for i, row in enumerate(table_data):
-            self.torque_table_widget.setItem(i, 0, QTableWidgetItem(str(row.get("max_torque", ""))))
-            self.torque_table_widget.setItem(i, 1, QTableWidgetItem(row.get("unit", "")))
-            self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
-            self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
-        self.torque_table_widget.resizeColumnsToContents()
+    def save_model(self):
+        self.openai_model = self.model_edit.text().strip()
+        set_app_setting("openai_model", self.openai_model)
+        QMessageBox.information(self, "Settings", "OpenAI Model saved.")
 
     def add_entry(self):
         dialog = TorqueEntryDialog(self)
@@ -790,16 +711,12 @@ class ModernTorqueApp(QMainWindow):
             self.load_torque_table_data()
             self.load_max_torque_dropdown()
 
-    def init_report_templates_tab(self):
-        self.report_templates_tab = QWidget()
-        layout = QVBoxLayout(self.report_templates_tab)
-        self.template_editor_btn = QPushButton("Open Report Template Editor")
-        self.template_editor_btn.clicked.connect(self.open_template_editor)
-        layout.addWidget(self.template_editor_btn)
-        self.report_templates_tab.setLayout(layout)
-        self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
-
-    def open_template_editor(self):
-        from template_editor import TemplateEditor
-        self.template_editor = TemplateEditor()
-        self.template_editor.show()
+    def load_torque_table_data(self):
+        table_data = get_torque_table()
+        self.torque_table_widget.setRowCount(len(table_data))
+        for i, row in enumerate(table_data):
+            self.torque_table_widget.setItem(i, 0, QTableWidgetItem(str(row.get("max_torque", ""))))
+            self.torque_table_widget.setItem(i, 1, QTableWidgetItem(row.get("unit", "")))
+            self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
+            self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
+        self.torque_table_widget.resizeColumnsToContents()
