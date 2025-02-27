@@ -1,4 +1,5 @@
 import duckdb
+from typing import Optional
 
 def init_db():
     """
@@ -7,7 +8,7 @@ def init_db():
     conn = duckdb.connect("data.duckdb", read_only=False)
     cursor = conn.cursor()
     
-    # No primary key, no constraints:
+    # Existing tables:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS TorqueTable (
             id INTEGER,
@@ -39,6 +40,14 @@ def init_db():
         )
     """)
     
+    # NEW: Create a simple settings table for storing key-value pairs.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS AppSettings (
+            setting_key TEXT,
+            setting_value TEXT
+        )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -57,7 +66,7 @@ def insert_default_torque_table_data():
         cursor.execute("SELECT COALESCE(MAX(id), 0) FROM TorqueTable")
         start_id = cursor.fetchone()[0]
         
-        # We'll add 2 sample rows with ID = start_id + 1, +2
+        # Add 2 sample rows
         sample_data = [
             (
                 start_id + 1,
@@ -101,7 +110,6 @@ def insert_raw_data(target_torque, row_id, allowance_label, range_str):
     conn = duckdb.connect("data.duckdb", read_only=False)
     cursor = conn.cursor()
     
-    # Generate an ID:
     cursor.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM RawData")
     new_id = cursor.fetchone()[0]
     
@@ -125,17 +133,12 @@ def add_torque_entry(max_torque, unit, type_, applied_torq, allowance1, allowanc
     """
     conn = duckdb.connect("data.duckdb", read_only=False)
     cursor = conn.cursor()
-    
-    # 1) Generate a new ID:
     cursor.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM TorqueTable")
     new_id = cursor.fetchone()[0]
-    
-    # 2) Insert with your new ID
     cursor.execute("""
         INSERT INTO TorqueTable (id, max_torque, unit, type, applied_torq, allowance1, allowance2, allowance3)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (new_id, max_torque, unit, type_, applied_torq, allowance1, allowance2, allowance3))
-    
     conn.commit()
     conn.close()
 
@@ -161,5 +164,36 @@ def delete_torque_entry(entry_id):
     conn = duckdb.connect("data.duckdb", read_only=False)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM TorqueTable WHERE id = ?", (entry_id,))
+    conn.commit()
+    conn.close()
+
+# ---------------- NEW: get_app_setting and set_app_setting ----------------
+
+def get_app_setting(key: str) -> Optional[str]:
+    """
+    Retrieve a setting value from AppSettings by key.
+    Returns None if not found.
+    """
+    conn = duckdb.connect("data.duckdb", read_only=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT setting_value FROM AppSettings WHERE setting_key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row[0]
+    return None
+
+def set_app_setting(key: str, value: str):
+    """
+    Inserts or updates a setting in AppSettings.
+    """
+    conn = duckdb.connect("data.duckdb", read_only=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM AppSettings WHERE setting_key = ?", (key,))
+    row = cursor.fetchone()
+    if row:
+        cursor.execute("UPDATE AppSettings SET setting_value = ? WHERE setting_key = ?", (value, key))
+    else:
+        cursor.execute("INSERT INTO AppSettings (setting_key, setting_value) VALUES (?, ?)", (key, value))
     conn.commit()
     conn.close()

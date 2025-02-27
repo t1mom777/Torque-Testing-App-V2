@@ -1,5 +1,5 @@
 import os
-import re  # For extracting numeric part from max torque text
+import re
 import json
 import threading
 import pandas as pd
@@ -10,24 +10,25 @@ import openai
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
-    QComboBox, QPushButton, QTreeWidget, QTreeWidgetItem, QFileDialog,
-    QMessageBox, QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
-    QStackedWidget, QDoubleSpinBox, QTableWidgetItem
+    QComboBox, QPushButton, QTableWidget, QHeaderView,
+    QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
+    QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
+    QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog, QDateEdit
 )
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate
 
-# Import your DB handler (DuckDB-based) and serial reader
+# Import DB handler (which includes get_app_setting/set_app_setting)
 from db_handler_local import (
     get_torque_table, insert_raw_data, insert_summary,
-    add_torque_entry, update_torque_entry, delete_torque_entry
+    add_torque_entry, update_torque_entry, delete_torque_entry,
+    get_app_setting, set_app_setting
 )
 from serial_reader import read_from_serial, find_fits_in_selected_row
 
 
 # ---------------- Worker Thread for Serial Reading ----------------
 class SerialReaderWorker(QThread):
-    reading_signal = pyqtSignal(float, list)  # (torque_value, fits_list)
+    reading_signal = pyqtSignal(float, list)
 
     def __init__(self, port, selected_row):
         super().__init__()
@@ -68,7 +69,6 @@ def calc_applied_torques(max_torque: float) -> list[float]:
         raw_val = max_torque * f
         rounded = round(raw_val / 10) * 10
         results.append(rounded)
-    print(f"[DEBUG] calc_applied_torques({max_torque}) => {results}")
     return results
 
 def calc_allowance_range(applied_val: float) -> str:
@@ -78,9 +78,7 @@ def calc_allowance_range(applied_val: float) -> str:
         tolerance = 0.04
     low = applied_val * (1 - tolerance)
     high = applied_val * (1 + tolerance)
-    range_str = f"{round(low,1)} - {round(high,1)}"
-    print(f"[DEBUG] calc_allowance_range({applied_val}) => {range_str}")
-    return range_str
+    return f"{round(low,1)} - {round(high,1)}"
 
 
 # ---------------- Dialog for Adding/Editing a Torque Entry ----------------
@@ -114,58 +112,51 @@ class TorqueEntryDialog(QDialog):
         self.max_torque_edit.textChanged.connect(self.auto_fill_applied_from_max)
         self.applied_torq_edit.textChanged.connect(self.auto_fill_allowances_from_applied)
 
-        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
+        self.setLayout(layout)
 
     def auto_fill_applied_from_max(self):
         txt = self.max_torque_edit.text().strip()
         if not txt:
-            print("[DEBUG] Max Torque field is empty.")
             return
         match = re.search(r"[\d\.]+", txt)
         if match:
             try:
                 max_torque = float(match.group())
-                print(f"[DEBUG] Extracted numeric max_torque from '{txt}' => {max_torque}")
             except ValueError:
-                print(f"[DEBUG] Could not convert '{match.group()}' to float.")
                 return
         else:
-            print(f"[DEBUG] No numeric portion found in '{txt}'")
             return
-
         applied_list = calc_applied_torques(max_torque)
         self.applied_torq_edit.blockSignals(True)
         self.applied_torq_edit.setText(json.dumps(applied_list))
         self.applied_torq_edit.blockSignals(False)
-
         self.auto_fill_allowances_from_applied()
 
     def auto_fill_allowances_from_applied(self):
         txt = self.applied_torq_edit.text().strip()
         if not txt:
-            print("[DEBUG] Applied Torque (JSON) field is empty.")
             return
         try:
             arr = json.loads(txt)
             if not isinstance(arr, list):
-                print(f"[DEBUG] '{txt}' is not a JSON list.")
                 return
         except (ValueError, json.JSONDecodeError):
-            print(f"[DEBUG] Could not parse JSON from '{txt}'.")
             return
-
         for i in range(3):
             val = arr[i] if i < len(arr) else 0
-            allow_str = calc_allowance_range(val)
+            rng = calc_allowance_range(val)
             if i == 0:
-                self.allowance1_edit.setText(allow_str)
+                self.allowance1_edit.setText(rng)
             elif i == 1:
-                self.allowance2_edit.setText(allow_str)
+                self.allowance2_edit.setText(rng)
             else:
-                self.allowance3_edit.setText(allow_str)
+                self.allowance3_edit.setText(rng)
 
     def get_data(self):
         return {
@@ -185,27 +176,31 @@ class ModernTorqueApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Torque Testing Application")
         self.setGeometry(100, 100, 950, 650)
-        self.setStyleSheet(self.load_stylesheet())
 
-        # Data placeholders
         self.results_by_range = {}
         self.customer_info = {}
         self.serial_worker = None
         self.selected_row = None
 
-        # OpenAI settings
+        # OpenAI settings (in memory defaults)
         self.openai_api_key = None
-        # Example custom model list default:
         self.openai_model = "gpt-4-turbo"
         self.openai_temperature = 0.7
         self.openai_top_p = 1.0
         self.openai_presence_penalty = 0.0
         self.openai_frequency_penalty = 0.0
+        self.ocr_engine = "Tesseract"
 
+        # Load saved API key from DB
+        saved_key = get_app_setting("openai_api_key")
+        if saved_key:
+            self.openai_api_key = saved_key
+
+        self.setStyleSheet(self.load_stylesheet())
         self.init_ui()
 
     def load_stylesheet(self):
-        stylesheet = """
+        return """
         QMainWindow {
             background-color: #FAFAFA;
             font-family: "Segoe UI", "Helvetica Neue", sans-serif;
@@ -218,7 +213,7 @@ class ModernTorqueApp(QMainWindow):
             color: #333;
             font-size: 14px;
         }
-        QDialog QLineEdit {
+        QDialog QLineEdit, QDateEdit {
             background-color: #FFFFFF;
             color: #333;
             border: 1px solid #ccc;
@@ -258,7 +253,7 @@ class ModernTorqueApp(QMainWindow):
         QPushButton:hover:!pressed {
             background-color: #2980b9;
         }
-        QComboBox, QLineEdit {
+        QComboBox, QLineEdit, QDateEdit {
             padding: 6px;
             font-size: 14px;
             border: 1px solid #ccc;
@@ -288,7 +283,6 @@ class ModernTorqueApp(QMainWindow):
             color: #333;
         }
         """
-        return stylesheet
 
     def init_ui(self):
         self.statusBar = QStatusBar()
@@ -297,16 +291,16 @@ class ModernTorqueApp(QMainWindow):
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
 
-        self.init_testing_tab()       # Certificate-like tab
-        self.init_settings_tab()      # Data Management + OpenAI
+        self.init_testing_tab()
+        self.init_settings_tab()
         self.init_report_templates_tab()
 
-    # ---------------- Redesigned Torque Testing Tab ----------------
+    # ---------------- Torque Testing Tab ----------------
     def init_testing_tab(self):
         self.testing_tab = QWidget()
         main_layout = QVBoxLayout(self.testing_tab)
 
-        # ---------- Top Info Grid (like certificate header) ----------
+        # ---------- Top Info Grid ----------
         info_grid = QGridLayout()
         row = 0
 
@@ -325,17 +319,22 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.model_edit, row, 1)
 
         info_grid.addWidget(QLabel("Calibration Date:"), row, 2)
-        self.calibration_date_edit = QLineEdit()
+        self.calibration_date_edit = QDateEdit()
+        self.calibration_date_edit.setDate(QDate.currentDate())
+        self.calibration_date_edit.setCalendarPopup(True)
         info_grid.addWidget(self.calibration_date_edit, row, 3)
 
         row += 1
 
         info_grid.addWidget(QLabel("Max Torque:"), row, 0)
-        self.max_torque_field = QLineEdit()
-        info_grid.addWidget(self.max_torque_field, row, 1)
+        self.max_torque_combo = QComboBox()
+        info_grid.addWidget(self.max_torque_combo, row, 1)
+        self.max_torque_combo.currentIndexChanged.connect(self.on_max_torque_combo_changed)
 
         info_grid.addWidget(QLabel("Calibration Due:"), row, 2)
-        self.calibration_due_edit = QLineEdit()
+        self.calibration_due_edit = QDateEdit()
+        self.calibration_due_edit.setDate(QDate.currentDate().addYears(1))
+        self.calibration_due_edit.setCalendarPopup(True)
         info_grid.addWidget(self.calibration_due_edit, row, 3)
 
         row += 1
@@ -358,71 +357,115 @@ class ModernTorqueApp(QMainWindow):
         self.address_edit = QLineEdit()
         info_grid.addWidget(self.address_edit, row, 3)
 
+        row += 1
+
+        info_grid.addWidget(QLabel("Serial Port:"), row, 0)
+        self.port_combo = QComboBox()
+        self.port_combo.addItems(self.get_serial_ports())
+        info_grid.addWidget(self.port_combo, row, 1)
+
         main_layout.addLayout(info_grid)
 
-        # ---------- Buttons (Start/Stop, Import, Export) ----------
-        button_layout = QHBoxLayout()
-
-        self.start_btn = QPushButton("Begin Test")
-        self.start_btn.clicked.connect(self.start_test)
-        button_layout.addWidget(self.start_btn)
-
-        self.stop_btn = QPushButton("End Test")
-        self.stop_btn.clicked.connect(self.stop_test)
-        self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.stop_btn)
-
-        self.upload_info_btn = QPushButton("Import Customer Info")
-        self.upload_info_btn.clicked.connect(self.upload_customer_info)
-        button_layout.addWidget(self.upload_info_btn)
-
-        self.export_excel_btn = QPushButton("Export Summary")
-        self.export_excel_btn.clicked.connect(self.export_summary_to_excel)
-        button_layout.addWidget(self.export_excel_btn)
-
-        main_layout.addLayout(button_layout)
-
-        # Optional live torque label (if you still want real-time feedback)
-        self.live_torque_label = QLabel("Live Torque: --")
-        self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
-        main_layout.addWidget(self.live_torque_label)
-
-        # ---------- Editable Table for Applied Torque, Min-Max, Test Results ----------
+        # ---------- Create Table ----------
         self.torque_table = QTableWidget()
         self.torque_table.setColumnCount(7)
         self.torque_table.setHorizontalHeaderLabels([
-            "Applied Torque",
-            "Min - Max Allowance",
-            "Test 1",
-            "Test 2",
-            "Test 3",
-            "Test 4",
-            "Test 5"
+            "Applied Torque", "Min - Max Allowance",
+            "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"
         ])
-        # Let’s start with 3 rows as an example
         self.torque_table.setRowCount(3)
         self.torque_table.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
         self.torque_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.torque_table)
 
-        # Add the final layout
+        self.load_max_torque_dropdown()
+
+        # ---------- Buttons ----------
+        btn_layout = QHBoxLayout()
+        self.start_btn = QPushButton("Begin Test")
+        self.start_btn.clicked.connect(self.start_test)
+        btn_layout.addWidget(self.start_btn)
+
+        self.stop_btn = QPushButton("End Test")
+        self.stop_btn.clicked.connect(self.stop_test)
+        self.stop_btn.setEnabled(False)
+        btn_layout.addWidget(self.stop_btn)
+
+        self.upload_info_btn = QPushButton("Import Customer Info")
+        self.upload_info_btn.clicked.connect(self.upload_customer_info)
+        btn_layout.addWidget(self.upload_info_btn)
+
+        self.export_excel_btn = QPushButton("Export Summary")
+        self.export_excel_btn.clicked.connect(self.export_summary_to_excel)
+        btn_layout.addWidget(self.export_excel_btn)
+
+        main_layout.addLayout(btn_layout)
+
+        self.live_torque_label = QLabel("Live Torque: --")
+        self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
+        main_layout.addWidget(self.live_torque_label)
+
         self.testing_tab.setLayout(main_layout)
         self.tab_widget.addTab(self.testing_tab, "Torque Testing")
 
-    # ---------------- Start / Stop Test (Serial) ----------------
-    def start_test(self):
-        # If you want to use real-time reading, we still rely on selected_row from DB
-        # This is optional. If you only do manual entry, you can remove or repurpose it.
+    def get_serial_ports(self):
+        ports = serial.tools.list_ports.comports()
+        return [p.device for p in ports]
+
+    def load_max_torque_dropdown(self):
+        self.max_torque_combo.clear()
+        table_data = get_torque_table()
+        for row in table_data:
+            txt = f"{row['max_torque']} {row['unit']} - {row['type']}"
+            self.max_torque_combo.addItem(txt, userData=row)
+        if table_data:
+            self.max_torque_combo.setCurrentIndex(0)
+            self.selected_row = table_data[0]
+            self.display_pre_test_rows()
+
+    def on_max_torque_combo_changed(self, index):
+        row_data = self.max_torque_combo.itemData(index)
+        if row_data:
+            self.selected_row = row_data
+            self.display_pre_test_rows()
+        else:
+            self.selected_row = None
+            self.clear_torque_table()
+
+    def display_pre_test_rows(self):
+        self.clear_torque_table()
         if not self.selected_row:
-            QMessageBox.warning(self, "Warning", "No torque entry selected from DB.")
             return
-        # Example: Start the worker
+        try:
+            applied_arr = json.loads(self.selected_row.get("applied_torq", "[]"))
+        except json.JSONDecodeError:
+            applied_arr = [0, 0, 0]
+        for i in range(3):
+            allowance_key = self.selected_row.get(f"allowance{i+1}", "")
+            applied_val = applied_arr[i] if i < len(applied_arr) else 0
+            self.torque_table.setItem(i, 0, QTableWidgetItem(str(applied_val)))
+            self.torque_table.setItem(i, 1, QTableWidgetItem(allowance_key))
+            for c in range(2, 7):
+                self.torque_table.setItem(i, c, QTableWidgetItem(""))
         self.results_by_range = {}
+
+    def clear_torque_table(self):
+        for r in range(self.torque_table.rowCount()):
+            for c in range(self.torque_table.columnCount()):
+                self.torque_table.setItem(r, c, QTableWidgetItem(""))
+
+    # ---------------- Begin / End Test ----------------
+    def start_test(self):
+        if not self.selected_row:
+            QMessageBox.warning(self, "Warning", "No torque entry selected.")
+            return
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.statusBar.showMessage("Test in progress...")
-        port = "COM1"  # or from user choice, etc.
-
+        port = self.port_combo.currentText()
+        if not port:
+            QMessageBox.warning(self, "Warning", "No serial port selected.")
+            return
         self.serial_worker = SerialReaderWorker(port, self.selected_row)
         self.serial_worker.reading_signal.connect(self.process_reading)
         self.serial_worker.start()
@@ -435,6 +478,7 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.statusBar.showMessage("Test ended.")
         QMessageBox.information(self, "Test Completed", "Test ended.")
+        print("[DEBUG] Test stopped. Results by range =>", self.results_by_range)
 
     def process_reading(self, target_torque, fits):
         self.live_torque_label.setText(f"Live Torque: {target_torque}")
@@ -442,74 +486,62 @@ class ModernTorqueApp(QMainWindow):
             self.live_torque_label.setStyleSheet("background-color: green; color: white; font-size: 16px; padding: 5px;")
         else:
             self.live_torque_label.setStyleSheet("background-color: red; color: white; font-size: 16px; padding: 5px;")
-
-        # If you want to automatically fill the table, you'd parse which row to put the torque in, etc.
-        # For now, this code just updates self.results_by_range as before.
-
         for fit in fits:
             allowance_key = fit.get('range_str', "")
             current_results = self.results_by_range.get(allowance_key, [])
             if len(current_results) < 5:
-                insert_raw_data(target_torque, self.selected_row["id"],
-                                f"allowance{fit.get('allowance_index', '')}",
-                                allowance_key)
+                insert_raw_data(
+                    target_torque, self.selected_row["id"],
+                    f"allowance{fit.get('allowance_index', '')}",
+                    allowance_key
+                )
                 current_results.append(target_torque)
                 self.results_by_range[allowance_key] = current_results
+        self.update_summary_table()
 
-    # ---------------- Export Logic ----------------
+    def update_summary_table(self):
+        for row_idx in range(self.torque_table.rowCount()):
+            allow_item = self.torque_table.item(row_idx, 1)
+            if allow_item:
+                allow_key = allow_item.text().strip()
+                test_vals = self.results_by_range.get(allow_key, [])
+                for col_idx in range(2, 7):
+                    val_index = col_idx - 2
+                    if val_index < len(test_vals):
+                        self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(str(test_vals[val_index])))
+                    else:
+                        self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
+
+    # ---------------- Export ----------------
     def export_summary_to_excel(self):
-        # Example: read from the torque_table widget
         row_count = self.torque_table.rowCount()
-        col_count = self.torque_table.columnCount()
-
+        headers = ["Applied Torque", "Min-Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
         summary_data = []
         for r in range(row_count):
-            applied = self.torque_table.item(r, 0)
-            allowance = self.torque_table.item(r, 1)
-            test_vals = []
-            for c in range(2, 7):
-                cell = self.torque_table.item(r, c)
-                test_vals.append(cell.text() if cell else "")
-            summary_data.append({
-                "Applied Torque": applied.text() if applied else "",
-                "Min-Max Allowance": allowance.text() if allowance else "",
-                "Test 1": test_vals[0],
-                "Test 2": test_vals[1],
-                "Test 3": test_vals[2],
-                "Test 4": test_vals[3],
-                "Test 5": test_vals[4],
-            })
-
+            row_dict = {}
+            for c in range(self.torque_table.columnCount()):
+                item = self.torque_table.item(r, c)
+                row_dict[headers[c]] = item.text() if item else ""
+            summary_data.append(row_dict)
         if summary_data:
             df = pd.DataFrame(summary_data)
             try:
                 df.to_excel("summary.xlsx", index=False)
                 QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx")
-                print("[DEBUG] Summary exported to summary.xlsx.")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Error exporting to Excel:\n{e}")
-                print("[DEBUG] Error exporting to Excel:", e)
         else:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
-            print("[DEBUG] No table data to export.")
 
-    # ---------------- OCR Import Logic (Optional) ----------------
+    # ---------------- OCR Import ----------------
     def upload_customer_info(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
             "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
         )
         if not file_path:
-            print("[DEBUG] No file selected for OCR.")
             return
-        # Ask if we want GPT-4 Vision or Tesseract
-        use_openai = QMessageBox.question(
-            self, "Use GPT-4 Vision OCR?",
-            "Do you want to use OpenAI GPT-4 Vision (requires special access)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) == QMessageBox.StandardButton.Yes
-
-        if use_openai:
+        if self.ocr_engine_combo.currentText() == "OpenAI GPT-4 Vision":
             if not self.openai_api_key:
                 QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
                 return
@@ -523,13 +555,10 @@ class ModernTorqueApp(QMainWindow):
                 ocr_text = pytesseract.image_to_string(image)
             except Exception as e:
                 QMessageBox.critical(self, "OCR Error", f"Error processing image: {e}")
-                print("[DEBUG] Error processing image for OCR:", e)
                 return
-
         self.parse_ocr_text(ocr_text)
 
     def parse_ocr_text(self, ocr_text):
-        # Example: parse "Manufacturer: TIREMAN" lines, etc.
         for line in ocr_text.splitlines():
             line = line.strip()
             if not line:
@@ -538,7 +567,6 @@ class ModernTorqueApp(QMainWindow):
             if len(parts) == 2:
                 key = parts[0].strip().lower()
                 value = parts[1].strip()
-                # Map them to your line edits
                 if "manufacturer" in key:
                     self.manufacturer_edit.setText(value)
                 elif "model" in key:
@@ -546,7 +574,7 @@ class ModernTorqueApp(QMainWindow):
                 elif "serial" in key:
                     self.serial_number_edit.setText(value)
                 elif "max" in key and "torque" in key:
-                    self.max_torque_field.setText(value)
+                    print("[DEBUG] OCR found max torque:", value)
                 elif "customer" in key:
                     self.customer_edit.setText(value)
                 elif "phone" in key:
@@ -554,26 +582,34 @@ class ModernTorqueApp(QMainWindow):
                 elif "address" in key:
                     self.address_edit.setText(value)
                 elif "calibration date" in key:
-                    self.calibration_date_edit.setText(value)
+                    # Optionally, parse and set calibration date
+                    pass
                 elif "calibration due" in key:
-                    self.calibration_due_edit.setText(value)
+                    pass
                 elif "unit" in key:
                     self.unit_number_edit.setText(value)
 
     def ocr_with_openai_vision(self, image_path: str) -> str:
+        """
+        Uses the new ChatCompletion API with file input to perform OCR with GPT-4 Vision.
+        Ensure you've run 'openai migrate' and are enrolled in GPT-4 Vision beta.
+        """
         openai.api_key = self.openai_api_key
         try:
-            response = openai.Image.create(
-                image=open(image_path, "rb").read(),
-                model=self.openai_model
+            response = openai.ChatCompletion.create(
+                model=self.openai_model,
+                messages=[
+                    {"role": "system", "content": "You are an OCR assistant. Extract all text from the attached image."}
+                ],
+                file=open(image_path, "rb")
             )
-            recognized_text = response.get("data", {}).get("text", "")
+            recognized_text = response.choices[0].message["content"]
             return recognized_text
         except Exception as e:
             print("[DEBUG] OpenAI Vision OCR error:", e)
             return ""
 
-    # ---------------- Settings Tab (Data Management + OpenAI) ----------------
+    # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
         self.settings_tab = QWidget()
         layout = QVBoxLayout(self.settings_tab)
@@ -587,7 +623,7 @@ class ModernTorqueApp(QMainWindow):
         self.settings_stacked = QStackedWidget()
         layout.addWidget(self.settings_stacked)
 
-        # --- Data Management Page ---
+        # Data Management Page
         self.data_management_page = QWidget()
         dm_layout = QVBoxLayout(self.data_management_page)
 
@@ -599,7 +635,7 @@ class ModernTorqueApp(QMainWindow):
         self.torque_table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         dm_layout.addWidget(self.torque_table_widget)
 
-        button_layout = QHBoxLayout()
+        btn_layout = QHBoxLayout()
         self.add_btn = QPushButton("Add Entry")
         self.add_btn.clicked.connect(self.add_entry)
         self.edit_btn = QPushButton("Edit Entry")
@@ -608,25 +644,25 @@ class ModernTorqueApp(QMainWindow):
         self.delete_btn.clicked.connect(self.delete_entry)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.load_torque_table_data)
-        button_layout.addWidget(self.add_btn)
-        button_layout.addWidget(self.edit_btn)
-        button_layout.addWidget(self.delete_btn)
-        button_layout.addWidget(self.refresh_btn)
-        dm_layout.addLayout(button_layout)
+        btn_layout.addWidget(self.add_btn)
+        btn_layout.addWidget(self.edit_btn)
+        btn_layout.addWidget(self.delete_btn)
+        btn_layout.addWidget(self.refresh_btn)
+        dm_layout.addLayout(btn_layout)
 
         self.data_management_page.setLayout(dm_layout)
         self.settings_stacked.addWidget(self.data_management_page)
 
-        # --- OpenAI Settings Page ---
+        # OpenAI Settings Page
         self.openai_settings_page = QWidget()
         openai_layout = QFormLayout(self.openai_settings_page)
 
         self.api_key_edit = QLineEdit()
-        self.api_key_edit.setText(self.openai_api_key if self.openai_api_key else "")
+        if self.openai_api_key:
+            self.api_key_edit.setText(self.openai_api_key)
         openai_layout.addRow("OpenAI API Key:", self.api_key_edit)
 
         self.model_combo = QComboBox()
-        # The models you requested:
         self.model_combo.addItems([
             "o1",
             "gpt-4o",
@@ -637,6 +673,11 @@ class ModernTorqueApp(QMainWindow):
         ])
         self.model_combo.setCurrentText(self.openai_model)
         openai_layout.addRow("Model:", self.model_combo)
+
+        self.ocr_engine_combo = QComboBox()
+        self.ocr_engine_combo.addItems(["Tesseract", "OpenAI GPT-4 Vision"])
+        self.ocr_engine_combo.setCurrentText(self.ocr_engine)
+        openai_layout.addRow("OCR Engine:", self.ocr_engine_combo)
 
         self.temp_spin = QDoubleSpinBox()
         self.temp_spin.setRange(0.0, 2.0)
@@ -667,11 +708,9 @@ class ModernTorqueApp(QMainWindow):
         openai_layout.addWidget(save_key_btn)
 
         self.settings_stacked.addWidget(self.openai_settings_page)
-
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
 
-        # Finally, load the table data
         self.load_torque_table_data()
 
     def on_settings_combo_changed(self, index):
@@ -680,14 +719,18 @@ class ModernTorqueApp(QMainWindow):
     def save_openai_settings(self):
         self.openai_api_key = self.api_key_edit.text().strip()
         self.openai_model = self.model_combo.currentText()
+        self.ocr_engine = self.ocr_engine_combo.currentText()
         self.openai_temperature = self.temp_spin.value()
         self.openai_top_p = self.top_p_spin.value()
         self.openai_presence_penalty = self.presence_spin.value()
         self.openai_frequency_penalty = self.freq_spin.value()
-        QMessageBox.information(self, "OpenAI Settings", "OpenAI settings saved in memory.")
+        if self.openai_api_key:
+            set_app_setting("openai_api_key", self.openai_api_key)
+        else:
+            set_app_setting("openai_api_key", "")
+        QMessageBox.information(self, "OpenAI Settings", "OpenAI settings saved in DB.")
 
     def load_torque_table_data(self):
-        print("[DEBUG] load_torque_table_data => Called.")
         table_data = get_torque_table()
         self.torque_table_widget.setRowCount(len(table_data))
         for i, row in enumerate(table_data):
@@ -696,14 +739,11 @@ class ModernTorqueApp(QMainWindow):
             self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
             self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
         self.torque_table_widget.resizeColumnsToContents()
-        print("[DEBUG] Torque table loaded with", len(table_data), "rows.")
 
     def add_entry(self):
-        print("[DEBUG] add_entry => Called.")
         dialog = TorqueEntryDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            print("[DEBUG] add_entry => dialog returned data:", data)
             add_torque_entry(
                 data["max_torque"], data["unit"], data["type"],
                 data["applied_torq"], data["allowance1"],
@@ -711,39 +751,31 @@ class ModernTorqueApp(QMainWindow):
             )
             QMessageBox.information(self, "Success", "Entry added successfully.")
             self.load_torque_table_data()
-            # Refresh the old torque dropdown if needed
-            # (You might remove or repurpose that logic if you're no longer using it)
-            self.refresh_torque_dropdown()
+            self.load_max_torque_dropdown()
 
     def edit_entry(self):
-        print("[DEBUG] edit_entry => Called.")
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select an entry to edit.")
-            print("[DEBUG] No selection for editing.")
             return
         row = self.torque_table_widget.currentRow()
         table_data = get_torque_table()
         entry = table_data[row]
-        print("[DEBUG] edit_entry => current entry:", entry)
         dialog = TorqueEntryDialog(self, entry)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            print("[DEBUG] edit_entry => updated data:", data)
             update_torque_entry(
                 entry["id"], data["max_torque"], data["unit"], data["type"],
                 data["applied_torq"], data["allowance1"], data["allowance2"], data["allowance3"]
             )
             QMessageBox.information(self, "Success", "Entry updated successfully.")
             self.load_torque_table_data()
-            self.refresh_torque_dropdown()
+            self.load_max_torque_dropdown()
 
     def delete_entry(self):
-        print("[DEBUG] delete_entry => Called.")
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select an entry to delete.")
-            print("[DEBUG] No selection for deleting.")
             return
         row = self.torque_table_widget.currentRow()
         table_data = get_torque_table()
@@ -753,26 +785,21 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if confirm == QMessageBox.StandardButton.Yes:
-            print(f"[DEBUG] Deleting entry ID {entry['id']}")
             delete_torque_entry(entry["id"])
             QMessageBox.information(self, "Success", "Entry deleted successfully.")
             self.load_torque_table_data()
-            self.refresh_torque_dropdown()
+            self.load_max_torque_dropdown()
 
-    # ---------------- Report Templates Tab ----------------
     def init_report_templates_tab(self):
         self.report_templates_tab = QWidget()
         layout = QVBoxLayout(self.report_templates_tab)
-
         self.template_editor_btn = QPushButton("Open Report Template Editor")
         self.template_editor_btn.clicked.connect(self.open_template_editor)
         layout.addWidget(self.template_editor_btn)
-
         self.report_templates_tab.setLayout(layout)
         self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
 
     def open_template_editor(self):
-        print("[DEBUG] open_template_editor => Called.")
         from template_editor import TemplateEditor
         self.template_editor = TemplateEditor()
         self.template_editor.show()
