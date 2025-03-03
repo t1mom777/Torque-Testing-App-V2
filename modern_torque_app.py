@@ -4,8 +4,6 @@ import json
 import threading
 import pandas as pd
 import serial.tools.list_ports
-from PIL import Image
-import pytesseract
 import openai
 
 from PyQt6.QtWidgets import (
@@ -13,7 +11,8 @@ from PyQt6.QtWidgets import (
     QComboBox, QPushButton, QTableWidget, QHeaderView,
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
-    QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog, QDateEdit
+    QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
+    QDateEdit, QPlainTextEdit
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate
 
@@ -192,9 +191,8 @@ class ModernTorqueApp(QMainWindow):
         self.openai_top_p = 1.0
         self.openai_presence_penalty = 0.0
         self.openai_frequency_penalty = 0.0
-        self.ocr_engine = "Tesseract"
 
-        # Load saved API key from DB on startup
+        # Load saved API key from DB
         saved_key = get_app_setting("openai_api_key")
         if saved_key:
             self.openai_api_key = saved_key
@@ -383,7 +381,6 @@ class ModernTorqueApp(QMainWindow):
 
         self.load_max_torque_dropdown()
 
-        # Buttons
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Begin Test")
         self.start_btn.clicked.connect(self.start_test)
@@ -407,6 +404,13 @@ class ModernTorqueApp(QMainWindow):
         self.live_torque_label = QLabel("Live Torque: --")
         self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
         main_layout.addWidget(self.live_torque_label)
+
+        # Add a read-only text area for displaying full OCR text.
+        main_layout.addWidget(QLabel("OCR Extracted Text:"))
+        self.ocr_text_display = QPlainTextEdit()
+        self.ocr_text_display.setReadOnly(True)
+        self.ocr_text_display.setPlaceholderText("Extracted OCR text will appear here...")
+        main_layout.addWidget(self.ocr_text_display)
 
         self.testing_tab.setLayout(main_layout)
         self.tab_widget.addTab(self.testing_tab, "Torque Testing")
@@ -516,7 +520,7 @@ class ModernTorqueApp(QMainWindow):
 
     def export_summary_to_excel(self):
         row_count = self.torque_table.rowCount()
-        headers = ["Applied Torque", "Min-Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+        headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
         summary_data = []
         for r in range(row_count):
             row_dict = {}
@@ -524,6 +528,21 @@ class ModernTorqueApp(QMainWindow):
                 item = self.torque_table.item(r, c)
                 row_dict[headers[c]] = item.text() if item else ""
             summary_data.append(row_dict)
+        # Additional customer/test info
+        extra_info = {
+            "Manufacturer": self.manufacturer_edit.text(),
+            "Serial Number": self.serial_number_edit.text(),
+            "Model": self.model_edit.text(),
+            "Calibration Date": self.calibration_date_edit.date().toString(Qt.DateFormat.ISODate),
+            "Calibration Due": self.calibration_due_edit.date().toString(Qt.DateFormat.ISODate),
+            "Unit Number": self.unit_number_edit.text(),
+            "Customer/Company": self.customer_edit.text(),
+            "Phone Number": self.phone_edit.text(),
+            "Address": self.address_edit.text(),
+            "OCR Text": self.ocr_text_display.toPlainText()
+        }
+        for row in summary_data:
+            row.update(extra_info)
         if summary_data:
             df = pd.DataFrame(summary_data)
             try:
@@ -534,6 +553,7 @@ class ModernTorqueApp(QMainWindow):
         else:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
 
+    # ---------------- OCR Import ----------------
     def upload_customer_info(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
@@ -541,73 +561,59 @@ class ModernTorqueApp(QMainWindow):
         )
         if not file_path:
             return
-        if self.ocr_engine_combo.currentText() == "OpenAI GPT-4 Vision":
-            if not self.openai_api_key:
-                QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
-                return
-            ocr_text = self.ocr_with_openai_vision(file_path)
-            if not ocr_text:
-                QMessageBox.warning(self, "OpenAI OCR Failed", "No text extracted or error occurred.")
-                return
-        else:
-            try:
-                image = Image.open(file_path)
-                ocr_text = pytesseract.image_to_string(image)
-            except Exception as e:
-                QMessageBox.critical(self, "OCR Error", f"Error processing image: {e}")
-                return
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        ocr_text = self.ocr_with_openai_vision(file_path)
+        if not ocr_text:
+            QMessageBox.warning(self, "OpenAI OCR Failed", "No text extracted or error occurred.")
+            return
         self.parse_ocr_text(ocr_text)
+        self.ocr_text_display.setPlainText(ocr_text)
 
     def parse_ocr_text(self, ocr_text):
+        # Updated parsing to handle lines without a colon as a fallback.
         for line in ocr_text.splitlines():
             line = line.strip()
             if not line:
                 continue
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                key = parts[0].strip().lower()
-                value = parts[1].strip()
-                if "manufacturer" in key:
-                    self.manufacturer_edit.setText(value)
-                elif "model" in key:
-                    self.model_edit.setText(value)
-                elif "serial" in key:
-                    self.serial_number_edit.setText(value)
-                elif "max" in key and "torque" in key:
-                    print("[DEBUG] OCR found max torque:", value)
-                elif "customer" in key:
-                    self.customer_edit.setText(value)
-                elif "phone" in key:
-                    self.phone_edit.setText(value)
-                elif "address" in key:
-                    self.address_edit.setText(value)
-                elif "calibration date" in key:
-                    pass
-                elif "calibration due" in key:
-                    pass
-                elif "unit" in key:
-                    self.unit_number_edit.setText(value)
+            if ":" in line:
+                key, value = line.split(":", 1)
+                key = key.strip().lower()
+                value = value.strip()
+            else:
+                key = line.lower()
+                value = line
+            if "manufacturer" in key:
+                self.manufacturer_edit.setText(value)
+            elif "model" in key:
+                self.model_edit.setText(value)
+            elif "serial" in key:
+                self.serial_number_edit.setText(value)
+            elif "max" in key and "torque" in key:
+                print("[DEBUG] OCR found max torque:", value)
+            elif "customer" in key:
+                self.customer_edit.setText(value)
+            elif "phone" in key:
+                self.phone_edit.setText(value)
+            elif "address" in key:
+                self.address_edit.setText(value)
+            elif "calibration date" in key:
+                # Optionally parse and set the calibration date
+                pass
+            elif "calibration due" in key:
+                # Optionally parse and set the calibration due date
+                pass
+            elif "unit" in key:
+                self.unit_number_edit.setText(value)
 
     def ocr_with_openai_vision(self, image_path: str) -> str:
         """
-        Uses the new ChatCompletion API with file input to perform OCR with GPT-4 Vision.
-        Ensure you've run 'openai migrate' (note: not supported on Windows) and are enrolled in GPT-4 Vision beta.
+        Uses the new OpenAI client interface to perform OCR with GPT‑4 Vision.
         """
-        openai.api_key = self.openai_api_key
-        try:
-            response = openai.ChatCompletion.create(
-                model=self.openai_model,
-                messages=[
-                    {"role": "system", "content": "You are an OCR assistant. Extract all text from the attached image."}
-                ],
-                file=open(image_path, "rb")
-            )
-            recognized_text = response.choices[0].message["content"]
-            return recognized_text
-        except Exception as e:
-            print("[DEBUG] OpenAI Vision OCR error:", e)
-            return ""
+        return perform_ocr_with_gpt4_vision(image_path, self.openai_api_key, self.openai_model)
 
+    # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
         self.settings_tab = QWidget()
         layout = QVBoxLayout(self.settings_tab)
@@ -662,20 +668,12 @@ class ModernTorqueApp(QMainWindow):
 
         self.model_combo = QComboBox()
         self.model_combo.addItems([
-            "o1",
             "gpt-4o",
             "gpt-4o-mini",
-            "gpt-4-turbo",
-            "o3",
-            "o3-mini"
+            "gpt-4-turbo"
         ])
         self.model_combo.setCurrentText(self.openai_model)
         openai_layout.addRow("Model:", self.model_combo)
-
-        self.ocr_engine_combo = QComboBox()
-        self.ocr_engine_combo.addItems(["Tesseract", "OpenAI GPT-4 Vision"])
-        self.ocr_engine_combo.setCurrentText(self.ocr_engine)
-        openai_layout.addRow("OCR Engine:", self.ocr_engine_combo)
 
         self.temp_spin = QDoubleSpinBox()
         self.temp_spin.setRange(0.0, 2.0)
@@ -717,7 +715,6 @@ class ModernTorqueApp(QMainWindow):
     def save_openai_settings(self):
         self.openai_api_key = self.api_key_edit.text().strip()
         self.openai_model = self.model_combo.currentText()
-        self.ocr_engine = self.ocr_engine_combo.currentText()
         self.openai_temperature = self.temp_spin.value()
         self.openai_top_p = self.top_p_spin.value()
         self.openai_presence_penalty = self.presence_spin.value()

@@ -1,4 +1,3 @@
-# serial_reader.py
 import serial
 import time
 import re
@@ -88,7 +87,6 @@ def read_from_serial(port, baudrate, callback, stop_event=None):
             if line:
                 torque_value = parse_torque_value(line)
                 if torque_value is not None:
-                    # Debug print to see what torque was parsed
                     print(f"[DEBUG] Serial callback received torque: {torque_value}")
                     callback(torque_value)
             time.sleep(0.01)
