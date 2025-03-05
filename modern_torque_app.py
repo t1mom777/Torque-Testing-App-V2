@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
     QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
-    QDateEdit, QPlainTextEdit
+    QDateEdit
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate
 
@@ -24,8 +24,8 @@ from db_handler_local import (
 )
 from serial_reader import read_from_serial, find_fits_in_selected_row
 
-# Import OpenAI handler module
-from openai_handler import perform_ocr_with_gpt4_vision
+# Import the new extraction function from openai_handler.
+from openai_handler import perform_extraction_from_image
 
 
 # ---------------- Worker Thread for Serial Reading ----------------
@@ -367,7 +367,7 @@ class ModernTorqueApp(QMainWindow):
 
         main_layout.addLayout(info_grid)
 
-        # Create Table
+        # Create Test Results Table
         self.torque_table = QTableWidget()
         self.torque_table.setColumnCount(7)
         self.torque_table.setHorizontalHeaderLabels([
@@ -405,12 +405,14 @@ class ModernTorqueApp(QMainWindow):
         self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
         main_layout.addWidget(self.live_torque_label)
 
-        # Add a read-only text area for displaying full OCR text.
-        main_layout.addWidget(QLabel("OCR Extracted Text:"))
-        self.ocr_text_display = QPlainTextEdit()
-        self.ocr_text_display.setReadOnly(True)
-        self.ocr_text_display.setPlaceholderText("Extracted OCR text will appear here...")
-        main_layout.addWidget(self.ocr_text_display)
+        # New: Table for displaying extracted data
+        self.extracted_data_table = QTableWidget()
+        self.extracted_data_table.setColumnCount(2)
+        self.extracted_data_table.setHorizontalHeaderLabels(["Field", "Value"])
+        self.extracted_data_table.verticalHeader().setVisible(False)
+        self.extracted_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        main_layout.addWidget(QLabel("Extracted Data:"))
+        main_layout.addWidget(self.extracted_data_table)
 
         self.testing_tab.setLayout(main_layout)
         self.tab_widget.addTab(self.testing_tab, "Torque Testing")
@@ -538,8 +540,7 @@ class ModernTorqueApp(QMainWindow):
             "Unit Number": self.unit_number_edit.text(),
             "Customer/Company": self.customer_edit.text(),
             "Phone Number": self.phone_edit.text(),
-            "Address": self.address_edit.text(),
-            "OCR Text": self.ocr_text_display.toPlainText()
+            "Address": self.address_edit.text()
         }
         for row in summary_data:
             row.update(extra_info)
@@ -553,7 +554,7 @@ class ModernTorqueApp(QMainWindow):
         else:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
 
-    # ---------------- OCR Import ----------------
+    # ---------------- Extraction from Image via ChatGPT API ----------------
     def upload_customer_info(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
@@ -564,54 +565,34 @@ class ModernTorqueApp(QMainWindow):
         if not self.openai_api_key:
             QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
             return
-        ocr_text = self.ocr_with_openai_vision(file_path)
-        if not ocr_text:
-            QMessageBox.warning(self, "OpenAI OCR Failed", "No text extracted or error occurred.")
+        extracted_data = self.extract_torque_data(file_path)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
             return
-        self.parse_ocr_text(ocr_text)
-        self.ocr_text_display.setPlainText(ocr_text)
+        self.update_extracted_data_table(extracted_data)
 
-    def parse_ocr_text(self, ocr_text):
-        # Updated parsing to handle lines without a colon as a fallback.
-        for line in ocr_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if ":" in line:
-                key, value = line.split(":", 1)
-                key = key.strip().lower()
-                value = value.strip()
-            else:
-                key = line.lower()
-                value = line
-            if "manufacturer" in key:
-                self.manufacturer_edit.setText(value)
-            elif "model" in key:
-                self.model_edit.setText(value)
-            elif "serial" in key:
-                self.serial_number_edit.setText(value)
-            elif "max" in key and "torque" in key:
-                print("[DEBUG] OCR found max torque:", value)
-            elif "customer" in key:
-                self.customer_edit.setText(value)
-            elif "phone" in key:
-                self.phone_edit.setText(value)
-            elif "address" in key:
-                self.address_edit.setText(value)
-            elif "calibration date" in key:
-                # Optionally parse and set the calibration date
-                pass
-            elif "calibration due" in key:
-                # Optionally parse and set the calibration due date
-                pass
-            elif "unit" in key:
-                self.unit_number_edit.setText(value)
+    def extract_torque_data(self, image_path: str) -> dict:
+        """
+        Uses the ChatGPT API to extract specific torque wrench details from the image.
+        Expects a JSON response with keys:
+        manufacturer, model, unit, serial, customer, phone, address.
+        """
+        return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
-    def ocr_with_openai_vision(self, image_path: str) -> str:
-        """
-        Uses the new OpenAI client interface to perform OCR with GPT‑4 Vision.
-        """
-        return perform_ocr_with_gpt4_vision(image_path, self.openai_api_key, self.openai_model)
+    def update_extracted_data_table(self, data: dict):
+        fields = [
+            ("Manufacturer", data.get("manufacturer", "")),
+            ("Model", data.get("model", "")),
+            ("Unit #", data.get("unit", "")),
+            ("Serial Number", data.get("serial", "")),
+            ("Customer/Company", data.get("customer", "")),
+            ("Phone Number", data.get("phone", "")),
+            ("Address", data.get("address", ""))
+        ]
+        self.extracted_data_table.setRowCount(len(fields))
+        for i, (field, value) in enumerate(fields):
+            self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
+            self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
 
     # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
@@ -798,3 +779,7 @@ class ModernTorqueApp(QMainWindow):
         from template_editor import TemplateEditor
         self.template_editor = TemplateEditor()
         self.template_editor.show()
+
+def main():
+    # This function can be used as an entry point if needed.
+    pass
