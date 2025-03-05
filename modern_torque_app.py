@@ -652,7 +652,7 @@ class ModernTorqueApp(QMainWindow):
         """
         Uses the ChatGPT API to extract specific torque wrench details from the image.
         Expects a JSON response with keys:
-        manufacturer, model, unit, serial, customer, phone, address.
+        manufacturer, model, unit, serial, customer, phone, address, max_torque, torque_unit
         """
         return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
@@ -666,7 +666,20 @@ class ModernTorqueApp(QMainWindow):
         self.phone_edit.setText(data.get("phone", ""))
         self.address_edit.setText(data.get("address", ""))
 
-        # Optionally, update the bottom extracted data table as well
+        # Safely handle max_torque (which might be int/float/string)
+        max_torque_raw = data.get("max_torque", "")
+        torque_unit_str = str(data.get("torque_unit", "")).strip()
+
+        # Convert to string before strip
+        max_torque_str = str(max_torque_raw).strip()
+        if max_torque_str:
+            try:
+                extracted_val = float(max_torque_str)
+                self.auto_select_max_torque(extracted_val, torque_unit_str)
+            except ValueError:
+                pass
+
+        # Update the bottom extracted data table
         fields = [
             ("Manufacturer", data.get("manufacturer", "")),
             ("Model", data.get("model", "")),
@@ -674,12 +687,90 @@ class ModernTorqueApp(QMainWindow):
             ("Serial Number", data.get("serial", "")),
             ("Customer/Company", data.get("customer", "")),
             ("Phone Number", data.get("phone", "")),
-            ("Address", data.get("address", ""))
+            ("Address", data.get("address", "")),
+            ("Max Torque", max_torque_str),
+            ("Torque Unit", torque_unit_str)
         ]
         self.extracted_data_table.setRowCount(len(fields))
         for i, (field, value) in enumerate(fields):
             self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
             self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
+
+    #
+    # -------------- EXPANDED auto_select_max_torque --------------
+    #
+    def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
+        """
+        Tries to match the extracted torque and unit with an existing row in the database.
+        Supports multiple synonyms for ft-lb, in-lb, and Nm (e.g. 'ft lb', 'ft-lbs', etc.).
+        If found, auto-select it in the combo box. Otherwise, user can still select manually.
+        """
+
+        # Define sets of recognized synonyms for each unit
+        FT_LB_SYNONYMS = {
+            "ft/lb", "ft-lb", "ft.lb", "ft lb",
+            "ft/lbs", "ft-lbs", "ft.lbs", "ft lbs"
+        }
+        IN_LB_SYNONYMS = {
+            "in/lb", "in-lb", "in.lb", "in lb",
+            "in/lbs", "in-lbs", "in.lbs", "in lbs"
+        }
+        NM_SYNONYMS = {
+            "nm", "n.m", "n*m", "nm.", "n.m."
+        }
+
+        # Helper conversions to Nm
+        def ftlb_to_nm(val):
+            return val * 1.35582
+
+        def inlb_to_nm(val):
+            return val * 0.113  # 1 in-lb ~ 0.113 Nm
+
+        # Convert the extracted unit to a canonical form (just for matching)
+        extracted_unit_lower = extracted_unit.lower().strip()
+
+        # 1) Determine the "extracted_val" in Nm
+        if extracted_unit_lower in FT_LB_SYNONYMS:
+            extracted_val_nm = ftlb_to_nm(extracted_val)
+        elif extracted_unit_lower in IN_LB_SYNONYMS:
+            extracted_val_nm = inlb_to_nm(extracted_val)
+        elif extracted_unit_lower in NM_SYNONYMS:
+            extracted_val_nm = extracted_val  # already in Nm
+        else:
+            # If it's an unknown unit, we can't convert => just do a direct float match
+            extracted_val_nm = extracted_val
+
+        # Retrieve all rows
+        table_data = get_torque_table()
+
+        # We'll match if the difference is within a tolerance (5% or at least 1.0)
+        # This helps handle slight differences in rounding or conversions.
+        tolerance_base = max(extracted_val_nm * 0.05, 1.0)
+
+        # 2) For each row in DB, convert its max_torque to Nm if needed
+        for i, row in enumerate(table_data):
+            db_torque = row["max_torque"]
+            db_unit_lower = row["unit"].lower().strip()
+
+            # Convert DB torque to Nm
+            if db_unit_lower in FT_LB_SYNONYMS:
+                db_torque_nm = ftlb_to_nm(db_torque)
+            elif db_unit_lower in IN_LB_SYNONYMS:
+                db_torque_nm = inlb_to_nm(db_torque)
+            elif db_unit_lower in NM_SYNONYMS:
+                db_torque_nm = db_torque
+            else:
+                # If the DB unit is unknown, treat as if it was already Nm
+                db_torque_nm = db_torque
+
+            # Compare
+            if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
+                # We have a match
+                self.max_torque_combo.setCurrentIndex(i)
+                self.selected_row = row
+                self.display_pre_test_rows()
+                return
+        # If no match found, do nothing => user can pick manually
 
     # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
