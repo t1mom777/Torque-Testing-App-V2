@@ -5,6 +5,7 @@ import threading
 import pandas as pd
 import serial.tools.list_ports
 import openai
+import tempfile
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
@@ -12,9 +13,10 @@ from PyQt6.QtWidgets import (
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
     QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
-    QDateEdit
+    QDateEdit, QToolButton, QMenu
 )
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate
+from PyQt6.QtGui import QAction, QClipboard, QImage
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate, QTimer
 
 # Import DB handler (which now includes AppSettings functions)
 from db_handler_local import (
@@ -24,7 +26,7 @@ from db_handler_local import (
 )
 from serial_reader import read_from_serial, find_fits_in_selected_row
 
-# Import the new extraction function from openai_handler.
+# Import the extraction function from openai_handler.
 from openai_handler import perform_extraction_from_image
 
 
@@ -391,8 +393,21 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-        self.upload_info_btn = QPushButton("Import Customer Info")
-        self.upload_info_btn.clicked.connect(self.upload_customer_info)
+        # Drop-down button for customer info
+        self.upload_info_btn = QToolButton()
+        self.upload_info_btn.setText("Import Customer Info")
+        self.upload_info_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        menu = QMenu()
+        action_upload_file = QAction("Upload image from computer", self)
+        action_clipboard = QAction("Upload image/screenshot from clipboard", self)
+        action_webcam = QAction("Take image from web camera", self)
+        menu.addAction(action_upload_file)
+        menu.addAction(action_clipboard)
+        menu.addAction(action_webcam)
+        self.upload_info_btn.setMenu(menu)
+        action_upload_file.triggered.connect(self.upload_customer_info_from_file)
+        action_clipboard.triggered.connect(self.upload_customer_info_from_clipboard)
+        action_webcam.triggered.connect(self.upload_customer_info_from_webcam)
         btn_layout.addWidget(self.upload_info_btn)
 
         self.export_excel_btn = QPushButton("Export Summary")
@@ -555,7 +570,7 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
 
     # ---------------- Extraction from Image via ChatGPT API ----------------
-    def upload_customer_info(self):
+    def upload_customer_info_from_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
             "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
@@ -571,6 +586,68 @@ class ModernTorqueApp(QMainWindow):
             return
         self.update_extracted_data_table(extracted_data)
 
+    def upload_customer_info_from_clipboard(self):
+        clipboard = QApplication.clipboard()
+        image = clipboard.image()
+        if image.isNull():
+            QMessageBox.warning(self, "Clipboard Empty", "No image found in clipboard.")
+            return
+        # Save image to a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp_file.close()
+        if not image.save(temp_file.name, "PNG"):
+            QMessageBox.critical(self, "Error", "Failed to save clipboard image.")
+            return
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        extracted_data = self.extract_torque_data(temp_file.name)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
+            return
+        self.update_extracted_data_table(extracted_data)
+
+    def upload_customer_info_from_webcam(self):
+        try:
+            import cv2
+        except ImportError:
+            QMessageBox.critical(self, "Error", "OpenCV is not installed. Please install opencv-python.")
+            return
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            QMessageBox.critical(self, "Error", "Could not open web camera.")
+            return
+        cv2.namedWindow("Webcam - Press Space to Capture", cv2.WINDOW_NORMAL)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                QMessageBox.critical(self, "Error", "Failed to capture image from web camera.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+            cv2.imshow("Webcam - Press Space to Capture", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == 32:  # space key
+                break
+            elif key == 27:  # escape key to cancel
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+        cap.release()
+        cv2.destroyAllWindows()
+        # Save the captured image to a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp_file.close()
+        cv2.imwrite(temp_file.name, frame)
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        extracted_data = self.extract_torque_data(temp_file.name)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
+            return
+        self.update_extracted_data_table(extracted_data)
+
     def extract_torque_data(self, image_path: str) -> dict:
         """
         Uses the ChatGPT API to extract specific torque wrench details from the image.
@@ -580,6 +657,16 @@ class ModernTorqueApp(QMainWindow):
         return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
     def update_extracted_data_table(self, data: dict):
+        # Update the top info fields with extracted data
+        self.manufacturer_edit.setText(data.get("manufacturer", ""))
+        self.model_edit.setText(data.get("model", ""))
+        self.unit_number_edit.setText(data.get("unit", ""))
+        self.serial_number_edit.setText(data.get("serial", ""))
+        self.customer_edit.setText(data.get("customer", ""))
+        self.phone_edit.setText(data.get("phone", ""))
+        self.address_edit.setText(data.get("address", ""))
+
+        # Optionally, update the bottom extracted data table as well
         fields = [
             ("Manufacturer", data.get("manufacturer", "")),
             ("Model", data.get("model", "")),
