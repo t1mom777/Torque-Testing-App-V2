@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
     QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
-    QDateEdit, QToolButton, QMenu
+    QDateEdit, QToolButton, QMenu, QApplication
 )
 from PyQt6.QtGui import QAction, QClipboard, QImage
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate, QTimer
