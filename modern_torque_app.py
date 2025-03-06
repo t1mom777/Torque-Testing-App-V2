@@ -6,6 +6,7 @@ import pandas as pd
 import serial.tools.list_ports
 import openai
 import tempfile
+from openpyxl import load_workbook  # For reading the template
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
@@ -543,6 +544,11 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.statusBar.showMessage("Test ended.")
+        # Clear the test results table and reset it for a new test
+        self.display_pre_test_rows()
+        # Refresh the available serial ports
+        self.port_combo.clear()
+        self.port_combo.addItems(self.get_serial_ports())
         QMessageBox.information(self, "Test Completed", "Test ended.")
         print("[DEBUG] Test stopped. Results by range =>", self.results_by_range)
 
@@ -578,6 +584,7 @@ class ModernTorqueApp(QMainWindow):
                     else:
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
+    # ---------------- New: Export Summary Using an Editable Template ----------------
     def export_summary_to_excel(self):
         row_count = self.torque_table.rowCount()
         headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
@@ -600,17 +607,60 @@ class ModernTorqueApp(QMainWindow):
             "Phone Number": self.phone_edit.text(),
             "Address": self.address_edit.text()
         }
-        for row in summary_data:
-            row.update(extra_info)
         if summary_data:
-            df = pd.DataFrame(summary_data)
-            try:
-                df.to_excel("summary.xlsx", index=False)
-                QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Error exporting to Excel:\n{e}")
+            template_path = "summary_template.xlsx"
+            if os.path.exists(template_path):
+                try:
+                    self.export_summary_with_template(template_path, extra_info, summary_data, "summary.xlsx")
+                    QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx using template.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Export Error", f"Error exporting with template:\n{e}")
+            else:
+                # Fallback to using Pandas export if template not found
+                df = pd.DataFrame(summary_data)
+                try:
+                    df.to_excel("summary.xlsx", index=False)
+                    QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx")
+                except Exception as e:
+                    QMessageBox.critical(self, "Export Error", f"Error exporting to Excel:\n{e}")
         else:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
+
+    def export_summary_with_template(self, template_path, extra_info, summary_data, output_path):
+        wb = load_workbook(template_path)
+        ws = wb.active
+        # Fill in extra info in designated cells (adjust these cell addresses as needed)
+        ws["B1"] = extra_info.get("Manufacturer", "")
+        ws["B2"] = extra_info.get("Serial Number", "")
+        ws["B3"] = extra_info.get("Model", "")
+        ws["B4"] = extra_info.get("Calibration Date", "")
+        ws["B5"] = extra_info.get("Calibration Due", "")
+        ws["B6"] = extra_info.get("Unit Number", "")
+        ws["B7"] = extra_info.get("Customer/Company", "")
+        ws["B8"] = extra_info.get("Phone Number", "")
+        ws["B9"] = extra_info.get("Address", "")
+        
+        # Insert summary data starting from row 12 (adjust as needed)
+        start_row = 12
+        # Optionally write headers if your template does not have them already
+        ws.cell(row=start_row, column=1, value="Applied Torque")
+        ws.cell(row=start_row, column=2, value="Min - Max Allowance")
+        ws.cell(row=start_row, column=3, value="Test 1")
+        ws.cell(row=start_row, column=4, value="Test 2")
+        ws.cell(row=start_row, column=5, value="Test 3")
+        ws.cell(row=start_row, column=6, value="Test 4")
+        ws.cell(row=start_row, column=7, value="Test 5")
+        
+        for i, row_data in enumerate(summary_data, start=start_row + 1):
+            ws.cell(row=i, column=1, value=row_data.get("Applied Torque", ""))
+            ws.cell(row=i, column=2, value=row_data.get("Min - Max Allowance", ""))
+            ws.cell(row=i, column=3, value=row_data.get("Test 1", ""))
+            ws.cell(row=i, column=4, value=row_data.get("Test 2", ""))
+            ws.cell(row=i, column=5, value=row_data.get("Test 3", ""))
+            ws.cell(row=i, column=6, value=row_data.get("Test 4", ""))
+            ws.cell(row=i, column=7, value=row_data.get("Test 5", ""))
+        
+        wb.save(output_path)
 
     # ---------------- Extraction from Image via ChatGPT API ----------------
     def upload_customer_info_from_file(self):
@@ -739,17 +789,12 @@ class ModernTorqueApp(QMainWindow):
             self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
             self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
 
-    #
-    # -------------- EXPANDED auto_select_max_torque --------------
-    #
     def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
         """
         Tries to match the extracted torque and unit with an existing row in the database.
         Supports multiple synonyms for ft-lb, in-lb, and Nm (e.g. 'ft lb', 'ft-lbs', etc.).
         If found, auto-select it in the combo box. Otherwise, user can still select manually.
         """
-
-        # Define sets of recognized synonyms for each unit
         FT_LB_SYNONYMS = {
             "ft/lb", "ft-lb", "ft.lb", "ft lb",
             "ft/lbs", "ft-lbs", "ft.lbs", "ft lbs"
@@ -762,40 +807,29 @@ class ModernTorqueApp(QMainWindow):
             "nm", "n.m", "n*m", "nm.", "n.m."
         }
 
-        # Helper conversions to Nm
         def ftlb_to_nm(val):
             return val * 1.35582
 
         def inlb_to_nm(val):
-            return val * 0.113  # 1 in-lb ~ 0.113 Nm
+            return val * 0.113
 
-        # Convert the extracted unit to a canonical form (just for matching)
         extracted_unit_lower = extracted_unit.lower().strip()
 
-        # 1) Determine the "extracted_val" in Nm
         if extracted_unit_lower in FT_LB_SYNONYMS:
             extracted_val_nm = ftlb_to_nm(extracted_val)
         elif extracted_unit_lower in IN_LB_SYNONYMS:
             extracted_val_nm = inlb_to_nm(extracted_val)
         elif extracted_unit_lower in NM_SYNONYMS:
-            extracted_val_nm = extracted_val  # already in Nm
+            extracted_val_nm = extracted_val
         else:
-            # If it's an unknown unit, we can't convert => just do a direct float match
             extracted_val_nm = extracted_val
 
-        # Retrieve all rows
         table_data = get_torque_table()
-
-        # We'll match if the difference is within a tolerance (5% or at least 1.0)
-        # This helps handle slight differences in rounding or conversions.
         tolerance_base = max(extracted_val_nm * 0.05, 1.0)
 
-        # 2) For each row in DB, convert its max_torque to Nm if needed
         for i, row in enumerate(table_data):
             db_torque = row["max_torque"]
             db_unit_lower = row["unit"].lower().strip()
-
-            # Convert DB torque to Nm
             if db_unit_lower in FT_LB_SYNONYMS:
                 db_torque_nm = ftlb_to_nm(db_torque)
             elif db_unit_lower in IN_LB_SYNONYMS:
@@ -803,17 +837,13 @@ class ModernTorqueApp(QMainWindow):
             elif db_unit_lower in NM_SYNONYMS:
                 db_torque_nm = db_torque
             else:
-                # If the DB unit is unknown, treat as if it was already Nm
                 db_torque_nm = db_torque
 
-            # Compare
             if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
-                # We have a match
                 self.max_torque_combo.setCurrentIndex(i)
                 self.selected_row = row
                 self.display_pre_test_rows()
                 return
-        # If no match found, do nothing => user can pick manually
 
     # ---------------- Settings Tab ----------------
     def init_settings_tab(self):
@@ -934,7 +964,6 @@ class ModernTorqueApp(QMainWindow):
         self.openai_top_p = self.top_p_spin.value()
         self.openai_presence_penalty = self.presence_spin.value()
         self.openai_frequency_penalty = self.freq_spin.value()
-        # Save all settings to the DB
         set_app_setting("openai_api_key", self.openai_api_key)
         set_app_setting("openai_model", self.openai_model)
         set_app_setting("openai_temperature", str(self.openai_temperature))
@@ -1009,6 +1038,10 @@ class ModernTorqueApp(QMainWindow):
         self.template_editor_btn = QPushButton("Open Report Template Editor")
         self.template_editor_btn.clicked.connect(self.open_template_editor)
         layout.addWidget(self.template_editor_btn)
+        # ---------------- New: Template Generator Button ----------------
+        self.generate_template_btn = QPushButton("Generate Summary Template")
+        self.generate_template_btn.clicked.connect(self.generate_summary_template)
+        layout.addWidget(self.generate_template_btn)
         self.report_templates_tab.setLayout(layout)
         self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
 
@@ -1017,6 +1050,36 @@ class ModernTorqueApp(QMainWindow):
         self.template_editor = TemplateEditor()
         self.template_editor.show()
 
+    # ---------------- New: Template Generator Function ----------------
+    def generate_summary_template(self):
+        from openpyxl import Workbook
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Summary Template"
+            # Extra info labels in column A (rows 1 to 9)
+            extra_info_labels = [
+                "Manufacturer:",
+                "Serial Number:",
+                "Model:",
+                "Calibration Date:",
+                "Calibration Due:",
+                "Unit Number:",
+                "Customer/Company:",
+                "Phone Number:",
+                "Address:"
+            ]
+            for i, label in enumerate(extra_info_labels, start=1):
+                ws.cell(row=i, column=1, value=label)
+            # Write summary data header starting at row 12
+            start_row = 12
+            headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+            for col, header in enumerate(headers, start=1):
+                ws.cell(row=start_row, column=col, value=header)
+            wb.save("summary_template.xlsx")
+            QMessageBox.information(self, "Template Generated", "Summary template generated as summary_template.xlsx")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to generate template: {e}")
+
 def main():
-    # This function can be used as an entry point if needed.
     pass
