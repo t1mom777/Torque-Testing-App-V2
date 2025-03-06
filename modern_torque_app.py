@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
     QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
-    QDateEdit, QToolButton, QMenu, QApplication
+    QDateEdit, QToolButton, QMenu, QApplication, QCheckBox
 )
 from PyQt6.QtGui import QAction, QClipboard, QImage
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate, QTimer
@@ -194,10 +194,49 @@ class ModernTorqueApp(QMainWindow):
         self.openai_presence_penalty = 0.0
         self.openai_frequency_penalty = 0.0
 
-        # Load saved API key from DB
+        # Load saved API key and additional OpenAI settings from DB
         saved_key = get_app_setting("openai_api_key")
         if saved_key:
             self.openai_api_key = saved_key
+
+        saved_model = get_app_setting("openai_model")
+        if saved_model:
+            self.openai_model = saved_model
+
+        saved_temperature = get_app_setting("openai_temperature")
+        if saved_temperature:
+            try:
+                self.openai_temperature = float(saved_temperature)
+            except ValueError:
+                pass
+
+        saved_top_p = get_app_setting("openai_top_p")
+        if saved_top_p:
+            try:
+                self.openai_top_p = float(saved_top_p)
+            except ValueError:
+                pass
+
+        saved_presence_penalty = get_app_setting("openai_presence_penalty")
+        if saved_presence_penalty:
+            try:
+                self.openai_presence_penalty = float(saved_presence_penalty)
+            except ValueError:
+                pass
+
+        saved_frequency_penalty = get_app_setting("openai_frequency_penalty")
+        if saved_frequency_penalty:
+            try:
+                self.openai_frequency_penalty = float(saved_frequency_penalty)
+            except ValueError:
+                pass
+
+        # Load setting for showing extracted data (default hidden)
+        saved_show_extracted = get_app_setting("show_extracted_data")
+        if saved_show_extracted:
+            self.show_extracted_data = (saved_show_extracted.lower() == "true")
+        else:
+            self.show_extracted_data = False
 
         self.setStyleSheet(self.load_stylesheet())
         self.init_ui()
@@ -420,14 +459,18 @@ class ModernTorqueApp(QMainWindow):
         self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
         main_layout.addWidget(self.live_torque_label)
 
-        # New: Table for displaying extracted data
+        # ---------------- Extracted Data Section ----------------
+        self.extracted_data_label = QLabel("Extracted Data:")
+        main_layout.addWidget(self.extracted_data_label)
         self.extracted_data_table = QTableWidget()
         self.extracted_data_table.setColumnCount(2)
         self.extracted_data_table.setHorizontalHeaderLabels(["Field", "Value"])
         self.extracted_data_table.verticalHeader().setVisible(False)
         self.extracted_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        main_layout.addWidget(QLabel("Extracted Data:"))
         main_layout.addWidget(self.extracted_data_table)
+        # Set visibility based on the setting
+        self.extracted_data_label.setVisible(self.show_extracted_data)
+        self.extracted_data_table.setVisible(self.show_extracted_data)
 
         self.testing_tab.setLayout(main_layout)
         self.tab_widget.addTab(self.testing_tab, "Torque Testing")
@@ -813,6 +856,12 @@ class ModernTorqueApp(QMainWindow):
         btn_layout.addWidget(self.refresh_btn)
         dm_layout.addLayout(btn_layout)
 
+        # New: Checkbox to show/hide extracted data in the Testing Tab
+        self.extracted_data_checkbox = QCheckBox("Show Extracted Data in Testing Tab")
+        self.extracted_data_checkbox.setChecked(self.show_extracted_data)
+        self.extracted_data_checkbox.stateChanged.connect(self.toggle_extracted_data)
+        dm_layout.addWidget(self.extracted_data_checkbox)
+
         self.data_management_page.setLayout(dm_layout)
         self.settings_stacked.addWidget(self.data_management_page)
 
@@ -871,6 +920,13 @@ class ModernTorqueApp(QMainWindow):
     def on_settings_combo_changed(self, index):
         self.settings_stacked.setCurrentIndex(index)
 
+    def toggle_extracted_data(self, state):
+        visible = (state == Qt.CheckState.Checked)
+        self.show_extracted_data = visible
+        set_app_setting("show_extracted_data", "true" if visible else "false")
+        self.extracted_data_label.setVisible(visible)
+        self.extracted_data_table.setVisible(visible)
+
     def save_openai_settings(self):
         self.openai_api_key = self.api_key_edit.text().strip()
         self.openai_model = self.model_combo.currentText()
@@ -878,10 +934,13 @@ class ModernTorqueApp(QMainWindow):
         self.openai_top_p = self.top_p_spin.value()
         self.openai_presence_penalty = self.presence_spin.value()
         self.openai_frequency_penalty = self.freq_spin.value()
-        if self.openai_api_key:
-            set_app_setting("openai_api_key", self.openai_api_key)
-        else:
-            set_app_setting("openai_api_key", "")
+        # Save all settings to the DB
+        set_app_setting("openai_api_key", self.openai_api_key)
+        set_app_setting("openai_model", self.openai_model)
+        set_app_setting("openai_temperature", str(self.openai_temperature))
+        set_app_setting("openai_top_p", str(self.openai_top_p))
+        set_app_setting("openai_presence_penalty", str(self.openai_presence_penalty))
+        set_app_setting("openai_frequency_penalty", str(self.openai_frequency_penalty))
         QMessageBox.information(self, "OpenAI Settings", "OpenAI settings saved in DB.")
 
     def load_torque_table_data(self):
