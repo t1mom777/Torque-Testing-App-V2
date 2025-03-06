@@ -1,2 +1,3 @@
 # .gitignore
 data.duckdb
+test_results.duckdb
