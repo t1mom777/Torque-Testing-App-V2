@@ -10,8 +10,8 @@ from openpyxl import load_workbook, Workbook  # For reading and generating the t
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
-    QComboBox, QPushButton, QTableWidget, QHeaderView,
-    QStatusBar, QTabWidget, QTableWidgetItem, QDialog,
+    QComboBox, QPushButton, QHeaderView,
+    QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem, QDialog,
     QFormLayout, QLineEdit, QDialogButtonBox, QHBoxLayout,
     QStackedWidget, QDoubleSpinBox, QMessageBox, QFileDialog,
     QDateEdit, QToolButton, QMenu, QApplication, QCheckBox
@@ -595,7 +595,7 @@ class ModernTorqueApp(QMainWindow):
                 item = self.torque_table.item(r, c)
                 row_dict[headers[c]] = item.text() if item else ""
             summary_data.append(row_dict)
-        # Additional customer/test info with MaxTorque variable added.
+        # Additional customer/test info with MaxTorque (with unit) added.
         extra_info = {
             "Manufacturer": self.manufacturer_edit.text(),
             "Serial Number": self.serial_number_edit.text(),
@@ -606,7 +606,7 @@ class ModernTorqueApp(QMainWindow):
             "Customer/Company": self.customer_edit.text(),
             "Phone Number": self.phone_edit.text(),
             "Address": self.address_edit.text(),
-            "MaxTorque": self.selected_row.get("max_torque", "") if self.selected_row else ""
+            "MaxTorque": f"{self.selected_row.get('max_torque', '')} {self.selected_row.get('unit', '')}" if self.selected_row else ""
         }
         if summary_data:
             template_path = "summary_template.xlsx"
@@ -645,7 +645,7 @@ class ModernTorqueApp(QMainWindow):
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
 
-        # Replace any placeholder found in all cells with corresponding variable values.
+        # Replace extra info placeholders in all cells.
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -654,29 +654,24 @@ class ModernTorqueApp(QMainWindow):
                         if placeholder in cell.value:
                             cell.value = cell.value.replace(placeholder, str(val))
 
-        # Find the row that contains the placeholder for summary rows "{{rows}}"
-        rows_placeholder_row = None
+        # Build summary variables for each allowance row.
+        summary_variables = {}
+        # Expecting summary_data to be a list of dictionaries for each allowance (should be 3 rows)
+        for idx, row_data in enumerate(summary_data):
+            allowance_number = idx + 1
+            summary_variables[f"AppliedTorque{allowance_number}"] = row_data.get("Applied Torque", "")
+            summary_variables[f"MinMaxAllowance{allowance_number}"] = row_data.get("Min - Max Allowance", "")
+            for test in range(1, 6):
+                summary_variables[f"Test{test}_Allowance{allowance_number}"] = row_data.get(f"Test {test}", "")
+
+        # Replace summary placeholders in all cells.
         for row in ws.iter_rows():
             for cell in row:
-                if cell.value == "{{rows}}":
-                    rows_placeholder_row = cell.row
-                    break
-            if rows_placeholder_row is not None:
-                break
-
-        if rows_placeholder_row is not None:
-            # Remove the placeholder row
-            ws.delete_rows(rows_placeholder_row, 1)
-
-            # Define the headers for summary data in fixed order.
-            headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
-            
-            # Insert each summary data row starting at the placeholder row index.
-            for row_data in summary_data:
-                ws.insert_rows(rows_placeholder_row)
-                for col_index, header in enumerate(headers, start=1):
-                    ws.cell(row=rows_placeholder_row, column=col_index, value=row_data.get(header, ""))
-                rows_placeholder_row += 1
+                if cell.value and isinstance(cell.value, str):
+                    for key, val in summary_variables.items():
+                        placeholder = "{{" + key + "}}"
+                        if placeholder in cell.value:
+                            cell.value = cell.value.replace(placeholder, str(val))
 
         wb.save(output_path)
 
@@ -1088,15 +1083,22 @@ class ModernTorqueApp(QMainWindow):
             ws.cell(row=9, column=2, value="{{Address}}")
             ws.cell(row=10, column=1, value="Max Torque:")
             ws.cell(row=10, column=2, value="{{MaxTorque}}")
-
-            # Leave a blank row and then create a header row for summary data.
+            
+            # Now create a table header for the test results.
             start_table = 12
-            headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+            headers = ["Allowance", "Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
             for col, header in enumerate(headers, start=1):
                 ws.cell(row=start_table, column=col, value=header)
-            # In the next row, insert a placeholder for where the summary rows should be inserted.
-            ws.cell(row=start_table+1, column=1, value="{{rows}}")
-
+            
+            # For each allowance (3 rows), create a row with placeholders.
+            for allowance in range(1, 4):
+                row_index = start_table + allowance
+                ws.cell(row=row_index, column=1, value=f"Allowance {allowance}")
+                ws.cell(row=row_index, column=2, value=f"{{{{AppliedTorque{allowance}}}}}")
+                ws.cell(row=row_index, column=3, value=f"{{{{MinMaxAllowance{allowance}}}}}")
+                for test in range(1, 6):
+                    ws.cell(row=row_index, column=3 + test, value=f"{{{{Test{test}_Allowance{allowance}}}}}")
+                    
             wb.save("summary_template.xlsx")
             QMessageBox.information(self, "Template Generated", "Summary template generated as summary_template.xlsx")
         except Exception as e:
