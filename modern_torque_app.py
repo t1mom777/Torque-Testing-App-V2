@@ -6,7 +6,7 @@ import pandas as pd
 import serial.tools.list_ports
 import openai
 import tempfile
-from openpyxl import load_workbook  # For reading the template
+from openpyxl import load_workbook, Workbook  # For reading and generating the template
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
@@ -584,7 +584,7 @@ class ModernTorqueApp(QMainWindow):
                     else:
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
-    # ---------------- New: Export Summary Using an Editable Template ----------------
+    # ---------------- Updated: Export Summary Using an Editable Template ----------------
     def export_summary_to_excel(self):
         row_count = self.torque_table.rowCount()
         headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
@@ -595,7 +595,7 @@ class ModernTorqueApp(QMainWindow):
                 item = self.torque_table.item(r, c)
                 row_dict[headers[c]] = item.text() if item else ""
             summary_data.append(row_dict)
-        # Additional customer/test info
+        # Additional customer/test info with MaxTorque variable added.
         extra_info = {
             "Manufacturer": self.manufacturer_edit.text(),
             "Serial Number": self.serial_number_edit.text(),
@@ -605,7 +605,8 @@ class ModernTorqueApp(QMainWindow):
             "Unit Number": self.unit_number_edit.text(),
             "Customer/Company": self.customer_edit.text(),
             "Phone Number": self.phone_edit.text(),
-            "Address": self.address_edit.text()
+            "Address": self.address_edit.text(),
+            "MaxTorque": self.selected_row.get("max_torque", "") if self.selected_row else ""
         }
         if summary_data:
             template_path = "summary_template.xlsx"
@@ -629,37 +630,54 @@ class ModernTorqueApp(QMainWindow):
     def export_summary_with_template(self, template_path, extra_info, summary_data, output_path):
         wb = load_workbook(template_path)
         ws = wb.active
-        # Fill in extra info in designated cells (adjust these cell addresses as needed)
-        ws["B1"] = extra_info.get("Manufacturer", "")
-        ws["B2"] = extra_info.get("Serial Number", "")
-        ws["B3"] = extra_info.get("Model", "")
-        ws["B4"] = extra_info.get("Calibration Date", "")
-        ws["B5"] = extra_info.get("Calibration Due", "")
-        ws["B6"] = extra_info.get("Unit Number", "")
-        ws["B7"] = extra_info.get("Customer/Company", "")
-        ws["B8"] = extra_info.get("Phone Number", "")
-        ws["B9"] = extra_info.get("Address", "")
-        
-        # Insert summary data starting from row 12 (adjust as needed)
-        start_row = 12
-        # Optionally write headers if your template does not have them already
-        ws.cell(row=start_row, column=1, value="Applied Torque")
-        ws.cell(row=start_row, column=2, value="Min - Max Allowance")
-        ws.cell(row=start_row, column=3, value="Test 1")
-        ws.cell(row=start_row, column=4, value="Test 2")
-        ws.cell(row=start_row, column=5, value="Test 3")
-        ws.cell(row=start_row, column=6, value="Test 4")
-        ws.cell(row=start_row, column=7, value="Test 5")
-        
-        for i, row_data in enumerate(summary_data, start=start_row + 1):
-            ws.cell(row=i, column=1, value=row_data.get("Applied Torque", ""))
-            ws.cell(row=i, column=2, value=row_data.get("Min - Max Allowance", ""))
-            ws.cell(row=i, column=3, value=row_data.get("Test 1", ""))
-            ws.cell(row=i, column=4, value=row_data.get("Test 2", ""))
-            ws.cell(row=i, column=5, value=row_data.get("Test 3", ""))
-            ws.cell(row=i, column=6, value=row_data.get("Test 4", ""))
-            ws.cell(row=i, column=7, value=row_data.get("Test 5", ""))
-        
+
+        # Prepare a mapping of extra info variables (keys without spaces)
+        variables = {
+            "Manufacturer": extra_info.get("Manufacturer", ""),
+            "SerialNumber": extra_info.get("Serial Number", ""),
+            "Model": extra_info.get("Model", ""),
+            "CalibrationDate": extra_info.get("Calibration Date", ""),
+            "CalibrationDue": extra_info.get("Calibration Due", ""),
+            "UnitNumber": extra_info.get("Unit Number", ""),
+            "CustomerCompany": extra_info.get("Customer/Company", ""),
+            "PhoneNumber": extra_info.get("Phone Number", ""),
+            "Address": extra_info.get("Address", ""),
+            "MaxTorque": extra_info.get("MaxTorque", "")
+        }
+
+        # Replace any placeholder found in all cells with corresponding variable values.
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value and isinstance(cell.value, str):
+                    for key, val in variables.items():
+                        placeholder = "{{" + key + "}}"
+                        if placeholder in cell.value:
+                            cell.value = cell.value.replace(placeholder, str(val))
+
+        # Find the row that contains the placeholder for summary rows "{{rows}}"
+        rows_placeholder_row = None
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value == "{{rows}}":
+                    rows_placeholder_row = cell.row
+                    break
+            if rows_placeholder_row is not None:
+                break
+
+        if rows_placeholder_row is not None:
+            # Remove the placeholder row
+            ws.delete_rows(rows_placeholder_row, 1)
+
+            # Define the headers for summary data in fixed order.
+            headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+            
+            # Insert each summary data row starting at the placeholder row index.
+            for row_data in summary_data:
+                ws.insert_rows(rows_placeholder_row)
+                for col_index, header in enumerate(headers, start=1):
+                    ws.cell(row=rows_placeholder_row, column=col_index, value=row_data.get(header, ""))
+                rows_placeholder_row += 1
+
         wb.save(output_path)
 
     # ---------------- Extraction from Image via ChatGPT API ----------------
@@ -763,7 +781,6 @@ class ModernTorqueApp(QMainWindow):
         max_torque_raw = data.get("max_torque", "")
         torque_unit_str = str(data.get("torque_unit", "")).strip()
 
-        # Convert to string before strip
         max_torque_str = str(max_torque_raw).strip()
         if max_torque_str:
             try:
@@ -790,11 +807,6 @@ class ModernTorqueApp(QMainWindow):
             self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
 
     def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
-        """
-        Tries to match the extracted torque and unit with an existing row in the database.
-        Supports multiple synonyms for ft-lb, in-lb, and Nm (e.g. 'ft lb', 'ft-lbs', etc.).
-        If found, auto-select it in the combo box. Otherwise, user can still select manually.
-        """
         FT_LB_SYNONYMS = {
             "ft/lb", "ft-lb", "ft.lb", "ft lb",
             "ft/lbs", "ft-lbs", "ft.lbs", "ft lbs"
@@ -886,7 +898,6 @@ class ModernTorqueApp(QMainWindow):
         btn_layout.addWidget(self.refresh_btn)
         dm_layout.addLayout(btn_layout)
 
-        # New: Checkbox to show/hide extracted data in the Testing Tab
         self.extracted_data_checkbox = QCheckBox("Show Extracted Data in Testing Tab")
         self.extracted_data_checkbox.setChecked(self.show_extracted_data)
         self.extracted_data_checkbox.stateChanged.connect(self.toggle_extracted_data)
@@ -1050,32 +1061,42 @@ class ModernTorqueApp(QMainWindow):
         self.template_editor = TemplateEditor()
         self.template_editor.show()
 
-    # ---------------- New: Template Generator Function ----------------
+    # ---------------- Updated: Template Generator Function ----------------
     def generate_summary_template(self):
-        from openpyxl import Workbook
         try:
             wb = Workbook()
             ws = wb.active
             ws.title = "Summary Template"
-            # Extra info labels in column A (rows 1 to 9)
-            extra_info_labels = [
-                "Manufacturer:",
-                "Serial Number:",
-                "Model:",
-                "Calibration Date:",
-                "Calibration Due:",
-                "Unit Number:",
-                "Customer/Company:",
-                "Phone Number:",
-                "Address:"
-            ]
-            for i, label in enumerate(extra_info_labels, start=1):
-                ws.cell(row=i, column=1, value=label)
-            # Write summary data header starting at row 12
-            start_row = 12
+            # Create extra info section with labels and variable placeholders.
+            ws.cell(row=1, column=1, value="Manufacturer:")
+            ws.cell(row=1, column=2, value="{{Manufacturer}}")
+            ws.cell(row=2, column=1, value="Serial Number:")
+            ws.cell(row=2, column=2, value="{{SerialNumber}}")
+            ws.cell(row=3, column=1, value="Model:")
+            ws.cell(row=3, column=2, value="{{Model}}")
+            ws.cell(row=4, column=1, value="Calibration Date:")
+            ws.cell(row=4, column=2, value="{{CalibrationDate}}")
+            ws.cell(row=5, column=1, value="Calibration Due:")
+            ws.cell(row=5, column=2, value="{{CalibrationDue}}")
+            ws.cell(row=6, column=1, value="Unit Number:")
+            ws.cell(row=6, column=2, value="{{UnitNumber}}")
+            ws.cell(row=7, column=1, value="Customer/Company:")
+            ws.cell(row=7, column=2, value="{{CustomerCompany}}")
+            ws.cell(row=8, column=1, value="Phone Number:")
+            ws.cell(row=8, column=2, value="{{PhoneNumber}}")
+            ws.cell(row=9, column=1, value="Address:")
+            ws.cell(row=9, column=2, value="{{Address}}")
+            ws.cell(row=10, column=1, value="Max Torque:")
+            ws.cell(row=10, column=2, value="{{MaxTorque}}")
+
+            # Leave a blank row and then create a header row for summary data.
+            start_table = 12
             headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
             for col, header in enumerate(headers, start=1):
-                ws.cell(row=start_row, column=col, value=header)
+                ws.cell(row=start_table, column=col, value=header)
+            # In the next row, insert a placeholder for where the summary rows should be inserted.
+            ws.cell(row=start_table+1, column=1, value="{{rows}}")
+
             wb.save("summary_template.xlsx")
             QMessageBox.information(self, "Template Generated", "Summary template generated as summary_template.xlsx")
         except Exception as e:
