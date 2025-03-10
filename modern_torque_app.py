@@ -1215,7 +1215,7 @@ class ModernTorqueApp(QMainWindow):
         self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
 
     def open_template_editor(self):
-        from template_editor import TemplateEditor
+        from template_editor import TemplateEditor # type: ignore
         self.template_editor = TemplateEditor()
         self.template_editor.show()
 
