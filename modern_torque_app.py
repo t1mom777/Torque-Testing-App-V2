@@ -692,24 +692,45 @@ class ModernTorqueApp(QMainWindow):
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
 
-        excel_filename = generate_filename(excel_filename_template, filename_variables)
-        pdf_filename = generate_filename(pdf_filename_template, filename_variables)
-        excel_path = os.path.join(excel_save_dir, excel_filename)
-        pdf_path = os.path.join(pdf_save_dir, pdf_filename)
+        # Retrieve the summary template path from settings (new)
+        template_path = get_app_setting("summary_template_path") or "summary_template.xlsx"
+        excel_path = None
+        # Check if Excel export is enabled
+        if self.excel_checkbox.isChecked():
+            excel_filename = generate_filename(excel_filename_template, filename_variables)
+            excel_path = os.path.join(excel_save_dir, excel_filename)
+            try:
+                if os.path.exists(template_path):
+                    self.export_summary_with_template(template_path, extra_info, summary_data, excel_path)
+                else:
+                    df = pd.DataFrame(summary_data)
+                    df.to_excel(excel_path, index=False)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Error exporting Excel summary:\n{e}")
+                return
+        else:
+            excel_path = None
 
-        template_path = "summary_template.xlsx"
-        try:
-            if os.path.exists(template_path):
-                self.export_summary_with_template(template_path, extra_info, summary_data, excel_path)
-            else:
-                df = pd.DataFrame(summary_data)
-                df.to_excel(excel_path, index=False)
+        pdf_path = None
+        # Check if PDF export is enabled
+        if self.pdf_checkbox.isChecked():
+            if not excel_path:
+                QMessageBox.warning(self, "Export Warning", "PDF export requires Excel export to be enabled.")
+                return
+            pdf_filename = generate_filename(pdf_filename_template, filename_variables)
+            pdf_path = os.path.join(pdf_save_dir, pdf_filename)
+            try:
+                convert_excel_to_pdf(excel_path, pdf_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Error exporting PDF summary:\n{e}")
+                return
 
-            convert_excel_to_pdf(excel_path, pdf_path)
-
-            QMessageBox.information(self, "Export Summary", f"Summary exported to:\nExcel: {excel_path}\nPDF: {pdf_path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", f"Error exporting summary:\n{e}")
+        msg = "Summary exported to:\n"
+        if excel_path:
+            msg += f"Excel: {excel_path}\n"
+        if pdf_path:
+            msg += f"PDF: {pdf_path}"
+        QMessageBox.information(self, "Export Summary", msg)
 
     def export_summary_with_template(self, template_path, extra_info, summary_data, output_path):
         wb = load_workbook(template_path)
@@ -1018,6 +1039,15 @@ class ModernTorqueApp(QMainWindow):
         self.export_settings_page = QWidget()
         export_layout = QFormLayout(self.export_settings_page)
 
+        # Added checkboxes for enabling/disabling export options
+        self.excel_checkbox = QCheckBox("Enable Excel Export")
+        self.excel_checkbox.setChecked(True)
+        export_layout.addRow("", self.excel_checkbox)
+
+        self.pdf_checkbox = QCheckBox("Enable PDF Export")
+        self.pdf_checkbox.setChecked(True)
+        export_layout.addRow("", self.pdf_checkbox)
+
         self.filename_vars = [
             ("Manufacturer", "{{Manufacturer}}"),
             ("Serial Number", "{{SerialNumber}}"),
@@ -1078,6 +1108,16 @@ class ModernTorqueApp(QMainWindow):
         self.pdf_var_combo.currentIndexChanged.connect(self.on_pdf_var_changed)
         pdf_template_layout.addWidget(self.pdf_var_combo)
         export_layout.addRow("PDF Filename Template:", pdf_template_layout)
+        
+        # New: Add option to select a summary template file from different locations.
+        template_path_layout = QHBoxLayout()
+        self.template_path_edit = QLineEdit()
+        self.template_path_edit.setText(get_app_setting("summary_template_path") or "summary_template.xlsx")
+        template_browse_btn = QPushButton("Browse")
+        template_browse_btn.clicked.connect(self.browse_template_file)
+        template_path_layout.addWidget(self.template_path_edit)
+        template_path_layout.addWidget(template_browse_btn)
+        export_layout.addRow("Summary Template File:", template_path_layout)
 
         save_export_btn = QPushButton("Save Export Settings")
         save_export_btn.clicked.connect(self.save_export_settings)
@@ -1120,11 +1160,20 @@ class ModernTorqueApp(QMainWindow):
         if directory:
             self.pdf_dir_edit.setText(directory)
 
+    def browse_template_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Summary Template", "", "Excel Files (*.xlsx);;All Files (*)"
+        )
+        if file_path:
+            self.template_path_edit.setText(file_path)
+
     def save_export_settings(self):
         set_app_setting("excel_save_dir", self.excel_dir_edit.text().strip())
         set_app_setting("pdf_save_dir", self.pdf_dir_edit.text().strip())
         set_app_setting("excel_filename_template", self.excel_template_edit.text().strip())
         set_app_setting("pdf_filename_template", self.pdf_template_edit.text().strip())
+        # Save the summary template file path setting (new)
+        set_app_setting("summary_template_path", self.template_path_edit.text().strip())
         QMessageBox.information(self, "Export Settings", "Export settings saved.")
 
     def toggle_extracted_data(self, state):
@@ -1251,21 +1300,24 @@ class ModernTorqueApp(QMainWindow):
             ws.cell(row=9, column=2, value="{{Address}}")
             ws.cell(row=10, column=1, value="Max Torque:")
             ws.cell(row=10, column=2, value="{{MaxTorque}}")
-
-            start_table = 12
-            headers = ["Allowance", "Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
-            for col, header in enumerate(headers, start=1):
-                ws.cell(row=start_table, column=col, value=header)
-
-            wb.save("summary_template.xlsx")
-            QMessageBox.information(self, "Template Generated", "Summary template generated as 'summary_template.xlsx'.")
+            save_path, _ = QFileDialog.getSaveFileName(self, "Save Summary Template", "", "Excel Files (*.xlsx);;All Files (*)")
+            if save_path:
+                wb.save(save_path)
+                QMessageBox.information(self, "Template Generated", f"Summary template saved to {save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate template:\n{e}")
 
-if __name__ == '__main__':
-    from PyQt6.QtWidgets import QApplication
+def main():
+    # Initialize the database and insert default data.
+    init_db()
+    insert_default_torque_table_data()
+    
     import sys
+    from PyQt6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     window = ModernTorqueApp()
     window.show()
     sys.exit(app.exec())
+
+if __name__ == '__main__':
+    main()
