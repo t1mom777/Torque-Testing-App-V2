@@ -8,6 +8,12 @@ import openai
 import tempfile
 from openpyxl import load_workbook, Workbook  # For reading and generating the template
 
+# New import for Excel to PDF conversion using win32com
+try:
+    import win32com.client
+except ImportError:
+    win32com = None
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
     QComboBox, QPushButton, QHeaderView,
@@ -19,16 +25,44 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QAction, QClipboard, QImage
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QDate, QTimer
 
-# Import DB handler (which now includes AppSettings functions)
 from db_handler_local import (
+    init_db, insert_default_torque_table_data,
     get_torque_table, insert_raw_data, insert_summary,
     add_torque_entry, update_torque_entry, delete_torque_entry,
     get_app_setting, set_app_setting
 )
 from serial_reader import read_from_serial, find_fits_in_selected_row
-
-# Import the extraction function from openai_handler.
 from openai_handler import perform_extraction_from_image
+
+
+# ---------------- Revised Excel->PDF function ----------------
+def convert_excel_to_pdf(excel_path: str, pdf_path: str):
+    """
+    Convert an Excel file to PDF using the Excel COM interface (pywin32).
+    Opens in read-only mode, disables alerts, and ensures the workbook is closed cleanly.
+    """
+    if win32com is None:
+        raise ImportError(
+            "win32com.client module is required for Excel to PDF conversion. "
+            "Please install pywin32 and run on Windows."
+        )
+
+    excel = win32com.client.Dispatch("Excel.Application")
+    excel.Visible = False
+    excel.DisplayAlerts = False  # Suppress any alerts/popups
+
+    try:
+        # Open the workbook in read-only mode to reduce locking issues
+        wb = excel.Workbooks.Open(os.path.abspath(excel_path), ReadOnly=1)
+        # 0 => PDF format. Use absolute path to avoid path issues.
+        wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+    finally:
+        # Ensure the workbook closes without saving changes
+        wb.Close(SaveChanges=0)
+        excel.Quit()
+        # Release COM references
+        del wb
+        del excel
 
 
 # ---------------- Worker Thread for Serial Reading ----------------
@@ -84,6 +118,16 @@ def calc_allowance_range(applied_val: float) -> str:
     low = applied_val * (1 - tolerance)
     high = applied_val * (1 + tolerance)
     return f"{round(low,1)} - {round(high,1)}"
+
+
+# ---------------- Helper for Filename Generation ----------------
+def generate_filename(template: str, variables: dict) -> str:
+    """Replace placeholders in the template (e.g. {{CustomerCompany}}) with the corresponding value."""
+    filename = template
+    for key, value in variables.items():
+        placeholder = "{{" + key + "}}"
+        filename = filename.replace(placeholder, str(value))
+    return filename
 
 
 # ---------------- Dialog for Adding/Editing a Torque Entry ----------------
@@ -450,9 +494,9 @@ class ModernTorqueApp(QMainWindow):
         action_webcam.triggered.connect(self.upload_customer_info_from_webcam)
         btn_layout.addWidget(self.upload_info_btn)
 
-        self.export_excel_btn = QPushButton("Export Summary")
-        self.export_excel_btn.clicked.connect(self.export_summary_to_excel)
-        btn_layout.addWidget(self.export_excel_btn)
+        self.export_summary_btn = QPushButton("Export Summary")
+        self.export_summary_btn.clicked.connect(self.export_summary)
+        btn_layout.addWidget(self.export_summary_btn)
 
         main_layout.addLayout(btn_layout)
 
@@ -460,7 +504,7 @@ class ModernTorqueApp(QMainWindow):
         self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
         main_layout.addWidget(self.live_torque_label)
 
-        # ---------------- Extracted Data Section ----------------
+        # Extracted Data Section
         self.extracted_data_label = QLabel("Extracted Data:")
         main_layout.addWidget(self.extracted_data_label)
         self.extracted_data_table = QTableWidget()
@@ -469,7 +513,8 @@ class ModernTorqueApp(QMainWindow):
         self.extracted_data_table.verticalHeader().setVisible(False)
         self.extracted_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.extracted_data_table)
-        # Set visibility based on the setting
+
+        # Show or hide the extracted data UI based on user settings
         self.extracted_data_label.setVisible(self.show_extracted_data)
         self.extracted_data_table.setVisible(self.show_extracted_data)
 
@@ -544,9 +589,7 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.statusBar.showMessage("Test ended.")
-        # Clear the test results table and reset it for a new test
         self.display_pre_test_rows()
-        # Refresh the available serial ports
         self.port_combo.clear()
         self.port_combo.addItems(self.get_serial_ports())
         QMessageBox.information(self, "Test Completed", "Test ended.")
@@ -584,8 +627,8 @@ class ModernTorqueApp(QMainWindow):
                     else:
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
-    # ---------------- Updated: Export Summary Using an Editable Template ----------------
-    def export_summary_to_excel(self):
+    # ---------------- Export Summary (Excel + PDF) ----------------
+    def export_summary(self):
         row_count = self.torque_table.rowCount()
         headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
         summary_data = []
@@ -595,7 +638,6 @@ class ModernTorqueApp(QMainWindow):
                 item = self.torque_table.item(r, c)
                 row_dict[headers[c]] = item.text() if item else ""
             summary_data.append(row_dict)
-        # Additional customer/test info with MaxTorque (with unit) added.
         extra_info = {
             "Manufacturer": self.manufacturer_edit.text(),
             "Serial Number": self.serial_number_edit.text(),
@@ -608,30 +650,55 @@ class ModernTorqueApp(QMainWindow):
             "Address": self.address_edit.text(),
             "MaxTorque": f"{self.selected_row.get('max_torque', '')} {self.selected_row.get('unit', '')}" if self.selected_row else ""
         }
-        if summary_data:
-            template_path = "summary_template.xlsx"
-            if os.path.exists(template_path):
-                try:
-                    self.export_summary_with_template(template_path, extra_info, summary_data, "summary.xlsx")
-                    QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx using template.")
-                except Exception as e:
-                    QMessageBox.critical(self, "Export Error", f"Error exporting with template:\n{e}")
-            else:
-                # Fallback to using Pandas export if template not found
-                df = pd.DataFrame(summary_data)
-                try:
-                    df.to_excel("summary.xlsx", index=False)
-                    QMessageBox.information(self, "Export Summary", "Summary exported to summary.xlsx")
-                except Exception as e:
-                    QMessageBox.critical(self, "Export Error", f"Error exporting to Excel:\n{e}")
-        else:
+
+        if not summary_data:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
+            return
+
+        # Retrieve export settings from the DB or use defaults
+        excel_save_dir = get_app_setting("excel_save_dir") or os.getcwd()
+        pdf_save_dir = get_app_setting("pdf_save_dir") or os.getcwd()
+        excel_filename_template = get_app_setting("excel_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
+        pdf_filename_template = get_app_setting("pdf_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
+
+        # Prepare variables for filename generation
+        filename_variables = {
+            "Manufacturer": extra_info.get("Manufacturer", ""),
+            "SerialNumber": extra_info.get("Serial Number", ""),
+            "Model": extra_info.get("Model", ""),
+            "CalibrationDate": extra_info.get("Calibration Date", ""),
+            "CalibrationDue": extra_info.get("Calibration Due", ""),
+            "UnitNumber": extra_info.get("Unit Number", ""),
+            "CustomerCompany": extra_info.get("Customer/Company", ""),
+            "PhoneNumber": extra_info.get("Phone Number", ""),
+            "Address": extra_info.get("Address", ""),
+            "MaxTorque": extra_info.get("MaxTorque", "")
+        }
+
+        excel_filename = generate_filename(excel_filename_template, filename_variables)
+        pdf_filename = generate_filename(pdf_filename_template, filename_variables)
+        excel_path = os.path.join(excel_save_dir, excel_filename)
+        pdf_path = os.path.join(pdf_save_dir, pdf_filename)
+
+        template_path = "summary_template.xlsx"
+        try:
+            if os.path.exists(template_path):
+                self.export_summary_with_template(template_path, extra_info, summary_data, excel_path)
+            else:
+                df = pd.DataFrame(summary_data)
+                df.to_excel(excel_path, index=False)
+
+            # Convert the Excel file directly to PDF with our updated function
+            convert_excel_to_pdf(excel_path, pdf_path)
+
+            QMessageBox.information(self, "Export Summary", f"Summary exported to:\nExcel: {excel_path}\nPDF: {pdf_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Error exporting summary:\n{e}")
 
     def export_summary_with_template(self, template_path, extra_info, summary_data, output_path):
         wb = load_workbook(template_path)
         ws = wb.active
 
-        # Prepare a mapping of extra info variables (keys without spaces)
         variables = {
             "Manufacturer": extra_info.get("Manufacturer", ""),
             "SerialNumber": extra_info.get("Serial Number", ""),
@@ -645,7 +712,7 @@ class ModernTorqueApp(QMainWindow):
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
 
-        # Replace extra info placeholders in all cells.
+        # Replace placeholders in the template
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -654,9 +721,7 @@ class ModernTorqueApp(QMainWindow):
                         if placeholder in cell.value:
                             cell.value = cell.value.replace(placeholder, str(val))
 
-        # Build summary variables for each allowance row.
         summary_variables = {}
-        # Expecting summary_data to be a list of dictionaries for each allowance (should be 3 rows)
         for idx, row_data in enumerate(summary_data):
             allowance_number = idx + 1
             summary_variables[f"AppliedTorque{allowance_number}"] = row_data.get("Applied Torque", "")
@@ -664,7 +729,7 @@ class ModernTorqueApp(QMainWindow):
             for test in range(1, 6):
                 summary_variables[f"Test{test}_Allowance{allowance_number}"] = row_data.get(f"Test {test}", "")
 
-        # Replace summary placeholders in all cells.
+        # Replace placeholders for each test row
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -698,7 +763,6 @@ class ModernTorqueApp(QMainWindow):
         if image.isNull():
             QMessageBox.warning(self, "Clipboard Empty", "No image found in clipboard.")
             return
-        # Save image to a temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         temp_file.close()
         if not image.save(temp_file.name, "PNG"):
@@ -741,7 +805,6 @@ class ModernTorqueApp(QMainWindow):
                 return
         cap.release()
         cv2.destroyAllWindows()
-        # Save the captured image to a temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         temp_file.close()
         cv2.imwrite(temp_file.name, frame)
@@ -755,15 +818,9 @@ class ModernTorqueApp(QMainWindow):
         self.update_extracted_data_table(extracted_data)
 
     def extract_torque_data(self, image_path: str) -> dict:
-        """
-        Uses the ChatGPT API to extract specific torque wrench details from the image.
-        Expects a JSON response with keys:
-        manufacturer, model, unit, serial, customer, phone, address, max_torque, torque_unit
-        """
         return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
     def update_extracted_data_table(self, data: dict):
-        # Update the top info fields with extracted data
         self.manufacturer_edit.setText(data.get("manufacturer", ""))
         self.model_edit.setText(data.get("model", ""))
         self.unit_number_edit.setText(data.get("unit", ""))
@@ -772,7 +829,6 @@ class ModernTorqueApp(QMainWindow):
         self.phone_edit.setText(data.get("phone", ""))
         self.address_edit.setText(data.get("address", ""))
 
-        # Safely handle max_torque (which might be int/float/string)
         max_torque_raw = data.get("max_torque", "")
         torque_unit_str = str(data.get("torque_unit", "")).strip()
 
@@ -784,7 +840,6 @@ class ModernTorqueApp(QMainWindow):
             except ValueError:
                 pass
 
-        # Update the bottom extracted data table
         fields = [
             ("Manufacturer", data.get("manufacturer", "")),
             ("Model", data.get("model", "")),
@@ -860,6 +915,7 @@ class ModernTorqueApp(QMainWindow):
         self.settings_combo = QComboBox()
         self.settings_combo.addItem("Data Management")
         self.settings_combo.addItem("OpenAI Settings")
+        self.settings_combo.addItem("Export Settings")
         self.settings_combo.currentIndexChanged.connect(self.on_settings_combo_changed)
         layout.addWidget(self.settings_combo)
 
@@ -948,6 +1004,81 @@ class ModernTorqueApp(QMainWindow):
         openai_layout.addWidget(save_key_btn)
 
         self.settings_stacked.addWidget(self.openai_settings_page)
+
+        # Export Settings Page
+        self.export_settings_page = QWidget()
+        export_layout = QFormLayout(self.export_settings_page)
+
+        self.filename_vars = [
+            ("Manufacturer", "{{Manufacturer}}"),
+            ("Serial Number", "{{SerialNumber}}"),
+            ("Model", "{{Model}}"),
+            ("Calibration Date", "{{CalibrationDate}}"),
+            ("Max Torque", "{{MaxTorque}}"),
+            ("Calibration Due", "{{CalibrationDue}}"),
+            ("Unit Number", "{{UnitNumber}}"),
+            ("Customer/Company", "{{CustomerCompany}}"),
+            ("Phone Number", "{{PhoneNumber}}"),
+            ("Address", "{{Address}}"),
+        ]
+
+        self.excel_dir_edit = QLineEdit()
+        self.excel_dir_edit.setText(get_app_setting("excel_save_dir") or os.getcwd())
+        excel_browse_btn = QPushButton("Browse")
+        excel_browse_btn.clicked.connect(self.browse_excel_dir)
+        hbox_excel = QHBoxLayout()
+        hbox_excel.addWidget(self.excel_dir_edit)
+        hbox_excel.addWidget(excel_browse_btn)
+        export_layout.addRow("Excel Save Directory:", hbox_excel)
+
+        self.pdf_dir_edit = QLineEdit()
+        self.pdf_dir_edit.setText(get_app_setting("pdf_save_dir") or os.getcwd())
+        pdf_browse_btn = QPushButton("Browse")
+        pdf_browse_btn.clicked.connect(self.browse_pdf_dir)
+        hbox_pdf = QHBoxLayout()
+        hbox_pdf.addWidget(self.pdf_dir_edit)
+        hbox_pdf.addWidget(pdf_browse_btn)
+        export_layout.addRow("PDF Save Directory:", hbox_pdf)
+
+        # Excel filename template + variable combo
+        excel_template_layout = QHBoxLayout()
+        self.excel_template_edit = QLineEdit()
+        self.excel_template_edit.setText(
+            get_app_setting("excel_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
+        )
+        excel_template_layout.addWidget(self.excel_template_edit)
+
+        self.excel_var_combo = QComboBox()
+        self.excel_var_combo.addItem("-- Insert variable --")
+        for label, placeholder in self.filename_vars:
+            self.excel_var_combo.addItem(label, placeholder)
+        self.excel_var_combo.currentIndexChanged.connect(self.on_excel_var_changed)
+        excel_template_layout.addWidget(self.excel_var_combo)
+        export_layout.addRow("Excel Filename Template:", excel_template_layout)
+
+        # PDF filename template + variable combo
+        pdf_template_layout = QHBoxLayout()
+        self.pdf_template_edit = QLineEdit()
+        self.pdf_template_edit.setText(
+            get_app_setting("pdf_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
+        )
+        pdf_template_layout.addWidget(self.pdf_template_edit)
+
+        self.pdf_var_combo = QComboBox()
+        self.pdf_var_combo.addItem("-- Insert variable --")
+        for label, placeholder in self.filename_vars:
+            self.pdf_var_combo.addItem(label, placeholder)
+        self.pdf_var_combo.currentIndexChanged.connect(self.on_pdf_var_changed)
+        pdf_template_layout.addWidget(self.pdf_var_combo)
+        export_layout.addRow("PDF Filename Template:", pdf_template_layout)
+
+        save_export_btn = QPushButton("Save Export Settings")
+        save_export_btn.clicked.connect(self.save_export_settings)
+        export_layout.addWidget(save_export_btn)
+
+        self.export_settings_page.setLayout(export_layout)
+        self.settings_stacked.addWidget(self.export_settings_page)
+
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
 
@@ -955,6 +1086,39 @@ class ModernTorqueApp(QMainWindow):
 
     def on_settings_combo_changed(self, index):
         self.settings_stacked.setCurrentIndex(index)
+
+    def on_excel_var_changed(self, index):
+        if index <= 0:
+            return
+        var_str = self.excel_var_combo.itemData(index)
+        current_text = self.excel_template_edit.text()
+        self.excel_template_edit.setText(current_text + var_str)
+        self.excel_var_combo.setCurrentIndex(0)
+
+    def on_pdf_var_changed(self, index):
+        if index <= 0:
+            return
+        var_str = self.pdf_var_combo.itemData(index)
+        current_text = self.pdf_template_edit.text()
+        self.pdf_template_edit.setText(current_text + var_str)
+        self.pdf_var_combo.setCurrentIndex(0)
+
+    def browse_excel_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Excel Save Directory")
+        if directory:
+            self.excel_dir_edit.setText(directory)
+
+    def browse_pdf_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select PDF Save Directory")
+        if directory:
+            self.pdf_dir_edit.setText(directory)
+
+    def save_export_settings(self):
+        set_app_setting("excel_save_dir", self.excel_dir_edit.text().strip())
+        set_app_setting("pdf_save_dir", self.pdf_dir_edit.text().strip())
+        set_app_setting("excel_filename_template", self.excel_template_edit.text().strip())
+        set_app_setting("pdf_filename_template", self.pdf_template_edit.text().strip())
+        QMessageBox.information(self, "Export Settings", "Export settings saved.")
 
     def toggle_extracted_data(self, state):
         visible = (state == Qt.CheckState.Checked)
@@ -1044,7 +1208,6 @@ class ModernTorqueApp(QMainWindow):
         self.template_editor_btn = QPushButton("Open Report Template Editor")
         self.template_editor_btn.clicked.connect(self.open_template_editor)
         layout.addWidget(self.template_editor_btn)
-        # ---------------- New: Template Generator Button ----------------
         self.generate_template_btn = QPushButton("Generate Summary Template")
         self.generate_template_btn.clicked.connect(self.generate_summary_template)
         layout.addWidget(self.generate_template_btn)
@@ -1056,13 +1219,11 @@ class ModernTorqueApp(QMainWindow):
         self.template_editor = TemplateEditor()
         self.template_editor.show()
 
-    # ---------------- Updated: Template Generator Function ----------------
     def generate_summary_template(self):
         try:
             wb = Workbook()
             ws = wb.active
             ws.title = "Summary Template"
-            # Create extra info section with labels and variable placeholders.
             ws.cell(row=1, column=1, value="Manufacturer:")
             ws.cell(row=1, column=2, value="{{Manufacturer}}")
             ws.cell(row=2, column=1, value="Serial Number:")
@@ -1083,26 +1244,115 @@ class ModernTorqueApp(QMainWindow):
             ws.cell(row=9, column=2, value="{{Address}}")
             ws.cell(row=10, column=1, value="Max Torque:")
             ws.cell(row=10, column=2, value="{{MaxTorque}}")
-            
-            # Now create a table header for the test results.
+
             start_table = 12
             headers = ["Allowance", "Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
             for col, header in enumerate(headers, start=1):
                 ws.cell(row=start_table, column=col, value=header)
-            
-            # For each allowance (3 rows), create a row with placeholders.
-            for allowance in range(1, 4):
-                row_index = start_table + allowance
-                ws.cell(row=row_index, column=1, value=f"Allowance {allowance}")
-                ws.cell(row=row_index, column=2, value=f"{{{{AppliedTorque{allowance}}}}}")
-                ws.cell(row=row_index, column=3, value=f"{{{{MinMaxAllowance{allowance}}}}}")
-                for test in range(1, 6):
-                    ws.cell(row=row_index, column=3 + test, value=f"{{{{Test{test}_Allowance{allowance}}}}}")
-                    
+
             wb.save("summary_template.xlsx")
-            QMessageBox.information(self, "Template Generated", "Summary template generated as summary_template.xlsx")
+            QMessageBox.information(self, "Template Generated", "Summary template generated as 'summary_template.xlsx'.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate template: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to generate template:\n{e}")
+
+    def extract_torque_data(self, image_path: str) -> dict:
+        return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
+
+    def update_extracted_data_table(self, data: dict):
+        self.manufacturer_edit.setText(data.get("manufacturer", ""))
+        self.model_edit.setText(data.get("model", ""))
+        self.unit_number_edit.setText(data.get("unit", ""))
+        self.serial_number_edit.setText(data.get("serial", ""))
+        self.customer_edit.setText(data.get("customer", ""))
+        self.phone_edit.setText(data.get("phone", ""))
+        self.address_edit.setText(data.get("address", ""))
+
+        max_torque_raw = data.get("max_torque", "")
+        torque_unit_str = str(data.get("torque_unit", "")).strip()
+
+        max_torque_str = str(max_torque_raw).strip()
+        if max_torque_str:
+            try:
+                extracted_val = float(max_torque_str)
+                self.auto_select_max_torque(extracted_val, torque_unit_str)
+            except ValueError:
+                pass
+
+        fields = [
+            ("Manufacturer", data.get("manufacturer", "")),
+            ("Model", data.get("model", "")),
+            ("Unit #", data.get("unit", "")),
+            ("Serial Number", data.get("serial", "")),
+            ("Customer/Company", data.get("customer", "")),
+            ("Phone Number", data.get("phone", "")),
+            ("Address", data.get("address", "")),
+            ("Max Torque", max_torque_str),
+            ("Torque Unit", torque_unit_str)
+        ]
+        self.extracted_data_table.setRowCount(len(fields))
+        for i, (field, value) in enumerate(fields):
+            self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
+            self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
+
+    def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
+        FT_LB_SYNONYMS = {
+            "ft/lb", "ft-lb", "ft.lb", "ft lb",
+            "ft/lbs", "ft-lbs", "ft.lbs", "ft lbs"
+        }
+        IN_LB_SYNONYMS = {
+            "in/lb", "in-lb", "in.lb", "in lb",
+            "in/lbs", "in-lbs", "in.lbs", "in lbs"
+        }
+        NM_SYNONYMS = {
+            "nm", "n.m", "n*m", "nm.", "n.m."
+        }
+
+        def ftlb_to_nm(val):
+            return val * 1.35582
+
+        def inlb_to_nm(val):
+            return val * 0.113
+
+        extracted_unit_lower = extracted_unit.lower().strip()
+
+        if extracted_unit_lower in FT_LB_SYNONYMS:
+            extracted_val_nm = ftlb_to_nm(extracted_val)
+        elif extracted_unit_lower in IN_LB_SYNONYMS:
+            extracted_val_nm = inlb_to_nm(extracted_val)
+        elif extracted_unit_lower in NM_SYNONYMS:
+            extracted_val_nm = extracted_val
+        else:
+            extracted_val_nm = extracted_val
+
+        table_data = get_torque_table()
+        tolerance_base = max(extracted_val_nm * 0.05, 1.0)
+
+        for i, row in enumerate(table_data):
+            db_torque = row["max_torque"]
+            db_unit_lower = row["unit"].lower().strip()
+            if db_unit_lower in FT_LB_SYNONYMS:
+                db_torque_nm = ftlb_to_nm(db_torque)
+            elif db_unit_lower in IN_LB_SYNONYMS:
+                db_torque_nm = inlb_to_nm(db_torque)
+            elif db_unit_lower in NM_SYNONYMS:
+                db_torque_nm = db_torque
+            else:
+                db_torque_nm = db_torque
+
+            if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
+                self.max_torque_combo.setCurrentIndex(i)
+                self.selected_row = row
+                self.display_pre_test_rows()
+                return
 
 def main():
-    pass
+    import sys
+    app = QApplication(sys.argv)
+    init_db()
+    insert_default_torque_table_data()
+    window = ModernTorqueApp()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == '__main__':
+    main()
