@@ -281,6 +281,7 @@ class ModernTorqueApp(QMainWindow):
         self.init_ui()
 
     def load_stylesheet(self):
+        # Updated style includes QCheckBox styling so checkboxes are visible on dark themes
         return """
         QMainWindow {
             background-color: #FAFAFA;
@@ -387,6 +388,26 @@ class ModernTorqueApp(QMainWindow):
         QMenu::item:selected {
             background-color: #2980b9;
             color: #FFFFFF;
+        }
+
+        /* Ensure QCheckBox is visible even in dark themes */
+        QCheckBox {
+            color: #333;
+            font-size: 14px;
+        }
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #3498db;
+            image: none;
+        }
+        QCheckBox::indicator:unchecked {
+            background-color: #fff;
+            image: none;
         }
         """
 
@@ -1300,24 +1321,34 @@ class ModernTorqueApp(QMainWindow):
             ws.cell(row=9, column=2, value="{{Address}}")
             ws.cell(row=10, column=1, value="Max Torque:")
             ws.cell(row=10, column=2, value="{{MaxTorque}}")
-            save_path, _ = QFileDialog.getSaveFileName(self, "Save Summary Template", "", "Excel Files (*.xlsx);;All Files (*)")
-            if save_path:
-                wb.save(save_path)
-                QMessageBox.information(self, "Template Generated", f"Summary template saved to {save_path}")
+
+            # Example placeholders for test results
+            ws.cell(row=12, column=1, value="Applied Torque 1:")
+            ws.cell(row=12, column=2, value="{{AppliedTorque1}}")
+            ws.cell(row=12, column=3, value="Min-Max Allowance 1:")
+            ws.cell(row=12, column=4, value="{{MinMaxAllowance1}}")
+            ws.cell(row=13, column=1, value="Test 1:")
+            ws.cell(row=13, column=2, value="{{Test1_Allowance1}}")
+            ws.cell(row=13, column=3, value="Test 2:")
+            ws.cell(row=13, column=4, value="{{Test2_Allowance1}}")
+            ws.cell(row=14, column=1, value="Test 3:")
+            ws.cell(row=14, column=2, value="{{Test3_Allowance1}}")
+            ws.cell(row=14, column=3, value="Test 4:")
+            ws.cell(row=14, column=4, value="{{Test4_Allowance1}}")
+            ws.cell(row=15, column=1, value="Test 5:")
+            ws.cell(row=15, column=2, value="{{Test5_Allowance1}}")
+
+            # Similarly for second/third row:
+            ws.cell(row=17, column=1, value="Applied Torque 2:")
+            ws.cell(row=17, column=2, value="{{AppliedTorque2}}")
+            ws.cell(row=17, column=3, value="Min-Max Allowance 2:")
+            ws.cell(row=17, column=4, value="{{MinMaxAllowance2}}")
+            ws.cell(row=18, column=1, value="Test 1:")
+            ws.cell(row=18, column=2, value="{{Test1_Allowance2}}")
+            # ... continue as needed
+
+            wb.save("summary_template.xlsx")
+            QMessageBox.information(self, "Template Generated", "summary_template.xlsx created.")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate template:\n{e}")
+            QMessageBox.critical(self, "Error", f"Error generating template:\n{e}")
 
-def main():
-    # Initialize the database and insert default data.
-    init_db()
-    insert_default_torque_table_data()
-    
-    import sys
-    from PyQt6.QtWidgets import QApplication
-    app = QApplication(sys.argv)
-    window = ModernTorqueApp()
-    window.show()
-    sys.exit(app.exec())
-
-if __name__ == '__main__':
-    main()

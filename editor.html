@@ -3,8 +3,7 @@
   <head>
     <meta charset="utf-8">
     <title>Template Editor</title>
-    <!-- Load CKEditor 5 from CDN -->
-    <script src="https://cdn.ckeditor.com/ckeditor5/35.0.1/classic/ckeditor.js"></script>
+    <!-- Removed CKEditor dependency -->
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
       body { margin: 0; padding: 0; font-family: sans-serif; }
@@ -108,18 +107,9 @@
       </textarea>
     </div>
     <script>
-      var editorInstance;
-      ClassicEditor
-        .create(document.querySelector('#editor'))
-        .then(editor => {
-          editorInstance = editor;
-        })
-        .catch(error => {
-          console.error(error);
-        });
-      
+      // Using plain textarea – no CKEditor initialization.
       function getContent() {
-        return editorInstance.getData();
+        return document.getElementById('editor').value;
       }
       
       new QWebChannel(qt.webChannelTransport, function(channel) {
@@ -142,14 +132,14 @@
       
       document.getElementById("menuNew").addEventListener("click", function(){
         if(confirm("Clear the current template?")) {
-          editorInstance.setData("");
+          document.getElementById('editor').value = "";
         }
       });
       
       document.getElementById("menuOpen").addEventListener("click", function(){
         window.editorAPI.open_file().then(function(content) {
           if(content) {
-            editorInstance.setData(content);
+            document.getElementById('editor').value = content;
           }
         });
       });
@@ -171,8 +161,8 @@
       document.getElementById("variableDropdown").addEventListener("change", function(){
         let value = this.value;
         if (value) {
-          let current = editorInstance.getData();
-          editorInstance.setData(current + value);
+          let current = getContent();
+          document.getElementById('editor').value = current + value;
           this.selectedIndex = 0;
         }
       });
