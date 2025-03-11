@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Template Editor</title>
+    <!-- Removed CKEditor dependency -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <style>
+      body { margin: 0; padding: 0; font-family: sans-serif; }
+      #menuBar {
+        background-color: #333;
+        color: #fff;
+        padding: 5px;
+        position: relative;
+        z-index: 1000;
+      }
+      #menuBar ul {
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+      }
+      #menuBar > ul > li {
+        display: inline-block;
+        position: relative;
+      }
+      #menuBar > ul > li > a {
+        display: block;
+        padding: 8px 16px;
+        text-decoration: none;
+        color: #fff;
+        cursor: pointer;
+      }
+      #menuBar li ul {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background-color: #333;
+        min-width: 120px;
+        z-index: 2000;
+      }
+      #menuBar li ul li {
+        display: block;
+      }
+      #menuBar li ul li a {
+        padding: 8px 16px;
+        color: #fff;
+        text-decoration: none;
+      }
+      #menuBar li ul li a:hover {
+        background-color: #111;
+        color: #fff;
+      }
+      #toolbar {
+        margin: 10px;
+        z-index: 500;
+      }
+      #toolbar label, #toolbar select {
+        font-size: 14px;
+        margin-right: 5px;
+      }
+      #editorContainer {
+        margin: 10px;
+      }
+      textarea {
+        width: 100%;
+        height: 60vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="menuBar">
+      <ul>
+        <li>
+          <a href="#" id="fileMenu">File</a>
+          <ul id="fileSubmenu">
+            <li><a href="#" id="menuNew">New</a></li>
+            <li><a href="#" id="menuOpen">Open</a></li>
+            <li><a href="#" id="menuSave">Save</a></li>
+            <li><a href="#" id="menuSaveAs">Save As</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+    <div id="toolbar">
+      <label for="variableDropdown">Insert Variable:</label>
+      <select id="variableDropdown">
+        <option value="">-- Select Variable --</option>
+        <option value="{{ applied_torque1 }}">Applied Torque 1</option>
+        <option value="{{ applied_torque2 }}">Applied Torque 2</option>
+        <option value="{{ applied_torque3 }}">Applied Torque 3</option>
+        <option value="{{ allowance1 }}">Allowance 1</option>
+        <option value="{{ allowance2 }}">Allowance 2</option>
+        <option value="{{ allowance3 }}">Allowance 3</option>
+        <option value="{{ test1 }}">Test 1</option>
+        <option value="{{ test2 }}">Test 2</option>
+        <option value="{{ test3 }}">Test 3</option>
+        <option value="{{ test4 }}">Test 4</option>
+        <option value="{{ test5 }}">Test 5</option>
+      </select>
+    </div>
+    <div id="editorContainer">
+      <textarea id="editor">
+<h1>Torque Test Report</h1>
+<p>This report summarizes the torque test results.</p>
+<p>Edit your template here. Use the placeholder <code>{{ rows }}</code> where you want to insert the test results table rows.</p>
+      </textarea>
+    </div>
+    <script>
+      // Using plain textarea – no CKEditor initialization.
+      function getContent() {
+        return document.getElementById('editor').value;
+      }
+      
+      new QWebChannel(qt.webChannelTransport, function(channel) {
+          window.editorAPI = channel.objects.editorAPI;
+      });
+      
+      document.getElementById("fileMenu").addEventListener("click", function(e) {
+        e.preventDefault();
+        let submenu = document.getElementById("fileSubmenu");
+        submenu.style.display = (submenu.style.display === "block") ? "none" : "block";
+      });
+      
+      document.addEventListener("click", function(e) {
+        let fileMenu = document.getElementById("fileMenu");
+        let submenu = document.getElementById("fileSubmenu");
+        if (!fileMenu.contains(e.target) && !submenu.contains(e.target)) {
+          submenu.style.display = "none";
+        }
+      });
+      
+      document.getElementById("menuNew").addEventListener("click", function(){
+        if(confirm("Clear the current template?")) {
+          document.getElementById('editor').value = "";
+        }
+      });
+      
+      document.getElementById("menuOpen").addEventListener("click", function(){
+        window.editorAPI.open_file().then(function(content) {
+          if(content) {
+            document.getElementById('editor').value = content;
+          }
+        });
+      });
+      
+      document.getElementById("menuSave").addEventListener("click", function(){
+        let content = getContent();
+        window.editorAPI.save_template(content).then(function(response){
+          alert(response);
+        });
+      });
+      
+      document.getElementById("menuSaveAs").addEventListener("click", function(){
+        let content = getContent();
+        window.editorAPI.save_template_as(content).then(function(response){
+          alert(response);
+        });
+      });
+      
+      document.getElementById("variableDropdown").addEventListener("change", function(){
+        let value = this.value;
+        if (value) {
+          let current = getContent();
+          document.getElementById('editor').value = current + value;
+          this.selectedIndex = 0;
+        }
+      });
+    </script>
+  </body>
+</html>
