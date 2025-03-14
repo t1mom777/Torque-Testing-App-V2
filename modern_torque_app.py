@@ -35,7 +35,6 @@ from serial_reader import read_from_serial, find_fits_in_selected_row
 from openai_handler import perform_extraction_from_image
 
 
-# ---------------- Revised Excel->PDF function ----------------
 def convert_excel_to_pdf(excel_path: str, pdf_path: str):
     """
     Convert an Excel file to PDF using the Excel COM interface (pywin32).
@@ -61,7 +60,6 @@ def convert_excel_to_pdf(excel_path: str, pdf_path: str):
         del excel
 
 
-# ---------------- Worker Thread for Serial Reading ----------------
 class SerialReaderWorker(QThread):
     reading_signal = pyqtSignal(float, list)
 
@@ -96,7 +94,6 @@ class SerialReaderWorker(QThread):
         self.stop_event.set()
 
 
-# ---------------- Helper Functions ----------------
 def calc_applied_torques(max_torque: float) -> list[float]:
     factors = [0.916, 0.583, 0.333]
     results = []
@@ -124,7 +121,6 @@ def generate_filename(template: str, variables: dict) -> str:
     return filename
 
 
-# ---------------- Dialog for Adding/Editing a Torque Entry ----------------
 class TorqueEntryDialog(QDialog):
     def __init__(self, parent=None, entry_data=None):
         super().__init__(parent)
@@ -213,7 +209,6 @@ class TorqueEntryDialog(QDialog):
         }
 
 
-# ---------------- Main Application Window ----------------
 class ModernTorqueApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -281,7 +276,6 @@ class ModernTorqueApp(QMainWindow):
         self.init_ui()
 
     def load_stylesheet(self):
-        # Updated style includes QCheckBox styling so checkboxes are visible on dark themes
         return """
         QMainWindow {
             background-color: #FAFAFA;
@@ -364,7 +358,6 @@ class ModernTorqueApp(QMainWindow):
             font-size: 14px;
             color: #333;
         }
-        /* New style for QToolButton */
         QToolButton {
             background-color: #3498db;
             border: none;
@@ -374,7 +367,6 @@ class ModernTorqueApp(QMainWindow):
             border-radius: 6px;
             min-width: 220px;
         }
-        /* New style for QMenu */
         QMenu {
             background-color: #3498db;
             border: none;
@@ -389,8 +381,6 @@ class ModernTorqueApp(QMainWindow):
             background-color: #2980b9;
             color: #FFFFFF;
         }
-
-        /* Ensure QCheckBox is visible even in dark themes */
         QCheckBox {
             color: #333;
             font-size: 14px;
@@ -422,7 +412,6 @@ class ModernTorqueApp(QMainWindow):
         self.init_settings_tab()
         self.init_report_templates_tab()
 
-    # ---------------- Torque Testing Tab ----------------
     def init_testing_tab(self):
         self.testing_tab = QWidget()
         main_layout = QVBoxLayout(self.testing_tab)
@@ -491,6 +480,11 @@ class ModernTorqueApp(QMainWindow):
         self.port_combo.addItems(self.get_serial_ports())
         info_grid.addWidget(self.port_combo, row, 1)
 
+        # Add live torque label to the top grid in the same row (row 5) at column 3
+        self.live_torque_label = QLabel("Live Torque: --")
+        self.live_torque_label.setStyleSheet("font-size: 48px; padding: 5px;")
+        info_grid.addWidget(self.live_torque_label, row, 3)
+
         main_layout.addLayout(info_grid)
 
         # Create Test Results Table
@@ -517,7 +511,6 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-        # Drop-down button for customer info with updated styling and width
         self.upload_info_btn = QToolButton()
         self.upload_info_btn.setText("Import Customer Info")
         self.upload_info_btn.setMinimumWidth(220)
@@ -539,11 +532,12 @@ class ModernTorqueApp(QMainWindow):
         self.export_summary_btn.clicked.connect(self.export_summary)
         btn_layout.addWidget(self.export_summary_btn)
 
-        main_layout.addLayout(btn_layout)
+        # New: Add Export Envelope button
+        self.export_envelope_btn = QPushButton("Export Envelope")
+        self.export_envelope_btn.clicked.connect(self.export_envelope)
+        btn_layout.addWidget(self.export_envelope_btn)
 
-        self.live_torque_label = QLabel("Live Torque: --")
-        self.live_torque_label.setStyleSheet("font-size: 16px; padding: 5px;")
-        main_layout.addWidget(self.live_torque_label)
+        main_layout.addLayout(btn_layout)
 
         # Extracted Data Section
         self.extracted_data_label = QLabel("Extracted Data:")
@@ -555,7 +549,6 @@ class ModernTorqueApp(QMainWindow):
         self.extracted_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.extracted_data_table)
 
-        # Show or hide the extracted data UI based on user settings
         self.extracted_data_label.setVisible(self.show_extracted_data)
         self.extracted_data_table.setVisible(self.show_extracted_data)
 
@@ -639,9 +632,9 @@ class ModernTorqueApp(QMainWindow):
     def process_reading(self, target_torque, fits):
         self.live_torque_label.setText(f"Live Torque: {target_torque}")
         if fits:
-            self.live_torque_label.setStyleSheet("background-color: green; color: white; font-size: 16px; padding: 5px;")
+            self.live_torque_label.setStyleSheet("background-color: green; color: white; font-size: 48px; padding: 5px;")
         else:
-            self.live_torque_label.setStyleSheet("background-color: red; color: white; font-size: 16px; padding: 5px;")
+            self.live_torque_label.setStyleSheet("background-color: red; color: white; font-size: 48px; padding: 5px;")
         for fit in fits:
             allowance_key = fit.get('range_str', "")
             current_results = self.results_by_range.get(allowance_key, [])
@@ -713,10 +706,8 @@ class ModernTorqueApp(QMainWindow):
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
 
-        # Retrieve the summary template path from settings (new)
         template_path = get_app_setting("summary_template_path") or "summary_template.xlsx"
         excel_path = None
-        # Check if Excel export is enabled
         if self.excel_checkbox.isChecked():
             excel_filename = generate_filename(excel_filename_template, filename_variables)
             excel_path = os.path.join(excel_save_dir, excel_filename)
@@ -733,7 +724,6 @@ class ModernTorqueApp(QMainWindow):
             excel_path = None
 
         pdf_path = None
-        # Check if PDF export is enabled
         if self.pdf_checkbox.isChecked():
             if not excel_path:
                 QMessageBox.warning(self, "Export Warning", "PDF export requires Excel export to be enabled.")
@@ -795,6 +785,89 @@ class ModernTorqueApp(QMainWindow):
                             cell.value = cell.value.replace(placeholder, str(val))
 
         wb.save(output_path)
+
+    # New method for Envelope export
+    def export_envelope(self):
+        row_count = self.torque_table.rowCount()
+        headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
+        summary_data = []
+        for r in range(row_count):
+            row_dict = {}
+            for c in range(self.torque_table.columnCount()):
+                item = self.torque_table.item(r, c)
+                row_dict[headers[c]] = item.text() if item else ""
+            summary_data.append(row_dict)
+        extra_info = {
+            "Manufacturer": self.manufacturer_edit.text(),
+            "Serial Number": self.serial_number_edit.text(),
+            "Model": self.model_edit.text(),
+            "Calibration Date": self.calibration_date_edit.date().toString(Qt.DateFormat.ISODate),
+            "Calibration Due": self.calibration_due_edit.date().toString(Qt.DateFormat.ISODate),
+            "Unit Number": self.unit_number_edit.text(),
+            "Customer/Company": self.customer_edit.text(),
+            "Phone Number": self.phone_edit.text(),
+            "Address": self.address_edit.text(),
+            "MaxTorque": f"{self.selected_row.get('max_torque', '')} {self.selected_row.get('unit', '')}" if self.selected_row else ""
+        }
+
+        if not summary_data:
+            QMessageBox.warning(self, "Export Warning", "No table data to export.")
+            return
+
+        excel_save_dir = get_app_setting("excel_save_dir") or os.getcwd()
+        pdf_save_dir = get_app_setting("pdf_save_dir") or os.getcwd()
+        envelope_excel_filename_template = get_app_setting("envelope_excel_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
+        envelope_pdf_filename_template = get_app_setting("envelope_pdf_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
+
+        filename_variables = {
+            "Manufacturer": extra_info.get("Manufacturer", ""),
+            "SerialNumber": extra_info.get("Serial Number", ""),
+            "Model": extra_info.get("Model", ""),
+            "CalibrationDate": extra_info.get("Calibration Date", ""),
+            "CalibrationDue": extra_info.get("Calibration Due", ""),
+            "UnitNumber": extra_info.get("Unit Number", ""),
+            "CustomerCompany": extra_info.get("Customer/Company", ""),
+            "PhoneNumber": extra_info.get("Phone Number", ""),
+            "Address": extra_info.get("Address", ""),
+            "MaxTorque": extra_info.get("MaxTorque", "")
+        }
+
+        envelope_template_path = get_app_setting("envelope_template_path") or "envelope_template.xlsx"
+        envelope_excel_path = None
+        if self.envelope_excel_checkbox.isChecked():
+            envelope_excel_filename = generate_filename(envelope_excel_filename_template, filename_variables)
+            envelope_excel_path = os.path.join(excel_save_dir, envelope_excel_filename)
+            try:
+                if os.path.exists(envelope_template_path):
+                    self.export_summary_with_template(envelope_template_path, extra_info, summary_data, envelope_excel_path)
+                else:
+                    df = pd.DataFrame(summary_data)
+                    df.to_excel(envelope_excel_path, index=False)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Error exporting Envelope Excel summary:\n{e}")
+                return
+        else:
+            envelope_excel_path = None
+
+        envelope_pdf_path = None
+        if self.envelope_pdf_checkbox.isChecked():
+            if not envelope_excel_path:
+                QMessageBox.warning(self, "Export Warning", "Envelope PDF export requires Envelope Excel export to be enabled.")
+                return
+            envelope_pdf_filename = generate_filename(envelope_pdf_filename_template, filename_variables)
+            envelope_pdf_path = os.path.join(pdf_save_dir, envelope_pdf_filename)
+            try:
+                convert_excel_to_pdf(envelope_excel_path, envelope_pdf_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Error exporting Envelope PDF summary:\n{e}")
+                return
+
+        msg = "Envelope export exported to:\n"
+        if envelope_excel_path:
+            msg += f"Excel: {envelope_excel_path}\n"
+        if envelope_pdf_path:
+            msg += f"PDF: {envelope_pdf_path}"
+        QMessageBox.information(self, "Export Envelope", msg)
 
     def upload_customer_info_from_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1060,7 +1133,6 @@ class ModernTorqueApp(QMainWindow):
         self.export_settings_page = QWidget()
         export_layout = QFormLayout(self.export_settings_page)
 
-        # Added checkboxes for enabling/disabling export options
         self.excel_checkbox = QCheckBox("Enable Excel Export")
         self.excel_checkbox.setChecked(True)
         export_layout.addRow("", self.excel_checkbox)
@@ -1130,7 +1202,6 @@ class ModernTorqueApp(QMainWindow):
         pdf_template_layout.addWidget(self.pdf_var_combo)
         export_layout.addRow("PDF Filename Template:", pdf_template_layout)
         
-        # New: Add option to select a summary template file from different locations.
         template_path_layout = QHBoxLayout()
         self.template_path_edit = QLineEdit()
         self.template_path_edit.setText(get_app_setting("summary_template_path") or "summary_template.xlsx")
@@ -1139,6 +1210,32 @@ class ModernTorqueApp(QMainWindow):
         template_path_layout.addWidget(self.template_path_edit)
         template_path_layout.addWidget(template_browse_btn)
         export_layout.addRow("Summary Template File:", template_path_layout)
+
+        # New Envelope Export Settings
+        self.envelope_excel_checkbox = QCheckBox("Enable Envelope Excel Export")
+        self.envelope_excel_checkbox.setChecked(False)
+        export_layout.addRow("", self.envelope_excel_checkbox)
+
+        self.envelope_pdf_checkbox = QCheckBox("Enable Envelope PDF Export")
+        self.envelope_pdf_checkbox.setChecked(False)
+        export_layout.addRow("", self.envelope_pdf_checkbox)
+
+        self.envelope_excel_template_edit = QLineEdit()
+        self.envelope_excel_template_edit.setText(get_app_setting("envelope_excel_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.xlsx")
+        export_layout.addRow("Envelope Excel Filename Template:", self.envelope_excel_template_edit)
+
+        self.envelope_pdf_template_edit = QLineEdit()
+        self.envelope_pdf_template_edit.setText(get_app_setting("envelope_pdf_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.pdf")
+        export_layout.addRow("Envelope PDF Filename Template:", self.envelope_pdf_template_edit)
+
+        envelope_template_layout = QHBoxLayout()
+        self.envelope_template_path_edit = QLineEdit()
+        self.envelope_template_path_edit.setText(get_app_setting("envelope_template_path") or "envelope_template.xlsx")
+        envelope_template_browse_btn = QPushButton("Browse")
+        envelope_template_browse_btn.clicked.connect(self.browse_envelope_template_file)
+        envelope_template_layout.addWidget(self.envelope_template_path_edit)
+        envelope_template_layout.addWidget(envelope_template_browse_btn)
+        export_layout.addRow("Envelope Template File:", envelope_template_layout)
 
         save_export_btn = QPushButton("Save Export Settings")
         save_export_btn.clicked.connect(self.save_export_settings)
@@ -1188,13 +1285,22 @@ class ModernTorqueApp(QMainWindow):
         if file_path:
             self.template_path_edit.setText(file_path)
 
+    def browse_envelope_template_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Envelope Template", "", "Excel Files (*.xlsx);;All Files (*)"
+        )
+        if file_path:
+            self.envelope_template_path_edit.setText(file_path)
+
     def save_export_settings(self):
         set_app_setting("excel_save_dir", self.excel_dir_edit.text().strip())
         set_app_setting("pdf_save_dir", self.pdf_dir_edit.text().strip())
         set_app_setting("excel_filename_template", self.excel_template_edit.text().strip())
         set_app_setting("pdf_filename_template", self.pdf_template_edit.text().strip())
-        # Save the summary template file path setting (new)
         set_app_setting("summary_template_path", self.template_path_edit.text().strip())
+        set_app_setting("envelope_excel_filename_template", self.envelope_excel_template_edit.text().strip())
+        set_app_setting("envelope_pdf_filename_template", self.envelope_pdf_template_edit.text().strip())
+        set_app_setting("envelope_template_path", self.envelope_template_path_edit.text().strip())
         QMessageBox.information(self, "Export Settings", "Export settings saved.")
 
     def toggle_extracted_data(self, state):
@@ -1307,48 +1413,18 @@ class ModernTorqueApp(QMainWindow):
             ws.cell(row=2, column=2, value="{{SerialNumber}}")
             ws.cell(row=3, column=1, value="Model:")
             ws.cell(row=3, column=2, value="{{Model}}")
-            ws.cell(row=4, column=1, value="Calibration Date:")
-            ws.cell(row=4, column=2, value="{{CalibrationDate}}")
-            ws.cell(row=5, column=1, value="Calibration Due:")
-            ws.cell(row=5, column=2, value="{{CalibrationDue}}")
-            ws.cell(row=6, column=1, value="Unit Number:")
-            ws.cell(row=6, column=2, value="{{UnitNumber}}")
-            ws.cell(row=7, column=1, value="Customer/Company:")
-            ws.cell(row=7, column=2, value="{{CustomerCompany}}")
-            ws.cell(row=8, column=1, value="Phone Number:")
-            ws.cell(row=8, column=2, value="{{PhoneNumber}}")
-            ws.cell(row=9, column=1, value="Address:")
-            ws.cell(row=9, column=2, value="{{Address}}")
-            ws.cell(row=10, column=1, value="Max Torque:")
-            ws.cell(row=10, column=2, value="{{MaxTorque}}")
-
-            # Example placeholders for test results
-            ws.cell(row=12, column=1, value="Applied Torque 1:")
-            ws.cell(row=12, column=2, value="{{AppliedTorque1}}")
-            ws.cell(row=12, column=3, value="Min-Max Allowance 1:")
-            ws.cell(row=12, column=4, value="{{MinMaxAllowance1}}")
-            ws.cell(row=13, column=1, value="Test 1:")
-            ws.cell(row=13, column=2, value="{{Test1_Allowance1}}")
-            ws.cell(row=13, column=3, value="Test 2:")
-            ws.cell(row=13, column=4, value="{{Test2_Allowance1}}")
-            ws.cell(row=14, column=1, value="Test 3:")
-            ws.cell(row=14, column=2, value="{{Test3_Allowance1}}")
-            ws.cell(row=14, column=3, value="Test 4:")
-            ws.cell(row=14, column=4, value="{{Test4_Allowance1}}")
-            ws.cell(row=15, column=1, value="Test 5:")
-            ws.cell(row=15, column=2, value="{{Test5_Allowance1}}")
-
-            # Similarly for second/third row:
-            ws.cell(row=17, column=1, value="Applied Torque 2:")
-            ws.cell(row=17, column=2, value="{{AppliedTorque2}}")
-            ws.cell(row=17, column=3, value="Min-Max Allowance 2:")
-            ws.cell(row=17, column=4, value="{{MinMaxAllowance2}}")
-            ws.cell(row=18, column=1, value="Test 1:")
-            ws.cell(row=18, column=2, value="{{Test1_Allowance2}}")
-            # ... continue as needed
-
-            wb.save("summary_template.xlsx")
-            QMessageBox.information(self, "Template Generated", "summary_template.xlsx created.")
+            # ... add more template generation code as needed
+            save_path, _ = QFileDialog.getSaveFileName(self, "Save Summary Template", "", "Excel Files (*.xlsx);;All Files (*)")
+            if save_path:
+                wb.save(save_path)
+                QMessageBox.information(self, "Template Generated", f"Summary template saved to {save_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error generating template:\n{e}")
+            QMessageBox.critical(self, "Error", f"Error generating summary template:\n{e}")
 
+if __name__ == '__main__':
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    window = ModernTorqueApp()
+    window.show()
+    sys.exit(app.exec())
