@@ -49,6 +49,13 @@ def init_db():
     """)
     
     conn.commit()
+    
+    # Insert default Laravel settings if they don't exist.
+    if get_app_setting("laravel_app_url") is None:
+        set_app_setting("laravel_app_url", "https://dev.c-trac.app")
+    if get_app_setting("laravel_api_token") is None:
+        set_app_setting("laravel_api_token", "")
+    
     conn.close()
 
 def insert_default_torque_table_data():
