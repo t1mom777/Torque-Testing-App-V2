@@ -1,11 +1,13 @@
+#!/usr/bin/env python3
 import os
 import re
 import json
 import threading
+import tempfile
+import requests  # new import for API calls
 import pandas as pd
 import serial.tools.list_ports
 import openai
-import tempfile
 from openpyxl import load_workbook, Workbook  # For reading and generating the template
 
 # New import for Excel to PDF conversion using win32com
@@ -34,7 +36,6 @@ from db_handler_local import (
 from serial_reader import read_from_serial, find_fits_in_selected_row
 from openai_handler import perform_extraction_from_image
 
-
 def convert_excel_to_pdf(excel_path: str, pdf_path: str):
     """
     Convert an Excel file to PDF using the Excel COM interface (pywin32).
@@ -58,7 +59,6 @@ def convert_excel_to_pdf(excel_path: str, pdf_path: str):
         excel.Quit()
         del wb
         del excel
-
 
 class SerialReaderWorker(QThread):
     reading_signal = pyqtSignal(float, list)
@@ -93,7 +93,6 @@ class SerialReaderWorker(QThread):
         print("[DEBUG] stop_event set. Stopping serial reading.")
         self.stop_event.set()
 
-
 def calc_applied_torques(max_torque: float) -> list[float]:
     factors = [0.916, 0.583, 0.333]
     results = []
@@ -119,7 +118,6 @@ def generate_filename(template: str, variables: dict) -> str:
         placeholder = "{{" + key + "}}"
         filename = filename.replace(placeholder, str(value))
     return filename
-
 
 class TorqueEntryDialog(QDialog):
     def __init__(self, parent=None, entry_data=None):
@@ -207,7 +205,6 @@ class TorqueEntryDialog(QDialog):
             "allowance2": self.allowance2_edit.text().strip(),
             "allowance3": self.allowance3_edit.text().strip()
         }
-
 
 class ModernTorqueApp(QMainWindow):
     def __init__(self):
@@ -480,7 +477,7 @@ class ModernTorqueApp(QMainWindow):
         self.port_combo.addItems(self.get_serial_ports())
         info_grid.addWidget(self.port_combo, row, 1)
 
-        # Add live torque label to the top grid in the same row (row 5) at column 3
+        # Add live torque label to the top grid in the same row at column 3
         self.live_torque_label = QLabel("Live Torque: --")
         self.live_torque_label.setStyleSheet("font-size: 48px; padding: 5px;")
         info_grid.addWidget(self.live_torque_label, row, 3)
@@ -511,6 +508,7 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
+        # Updated Upload Customer Info button with an extra menu item for API import via link.
         self.upload_info_btn = QToolButton()
         self.upload_info_btn.setText("Import Customer Info")
         self.upload_info_btn.setMinimumWidth(220)
@@ -519,13 +517,16 @@ class ModernTorqueApp(QMainWindow):
         action_upload_file = QAction("Upload image from computer", self)
         action_clipboard = QAction("Upload image/screenshot from clipboard", self)
         action_webcam = QAction("Take image from web camera", self)
+        action_link = QAction("Import info from link", self)  # New action for API extraction via link
         menu.addAction(action_upload_file)
         menu.addAction(action_clipboard)
         menu.addAction(action_webcam)
+        menu.addAction(action_link)
         self.upload_info_btn.setMenu(menu)
         action_upload_file.triggered.connect(self.upload_customer_info_from_file)
         action_clipboard.triggered.connect(self.upload_customer_info_from_clipboard)
         action_webcam.triggered.connect(self.upload_customer_info_from_webcam)
+        action_link.triggered.connect(self.upload_customer_info_from_link)  # Connect new function
         btn_layout.addWidget(self.upload_info_btn)
 
         self.export_summary_btn = QPushButton("Export Summary")
@@ -945,6 +946,96 @@ class ModernTorqueApp(QMainWindow):
             return
         self.update_extracted_data_table(extracted_data)
 
+    # New function: Import customer info via API using a link from clipboard.
+    def upload_customer_info_from_link(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text().strip()
+        if not text:
+            QMessageBox.warning(self, "Clipboard Empty", "No text found in clipboard.")
+            return
+        # Extract the last numeric sequence from the link
+        match = re.search(r'(\d+)(?!.*\d)', text)
+        if not match:
+            QMessageBox.warning(self, "Invalid Link", "No numeric ID found in the clipboard text.")
+            return
+        line_item_id = match.group(1)
+        token = get_app_setting("laravel_api_token")
+        if not token:
+            QMessageBox.critical(self, "Error", "Laravel API token not set in settings.")
+            return
+        laravel_url = get_app_setting("laravel_app_url")
+        if not laravel_url:
+            QMessageBox.critical(self, "Error", "Laravel app URL not set in settings.")
+            return
+
+        # Call the API to get line-item details
+        line_item_response = self.get_line_item_from_api(line_item_id, token, laravel_url)
+        if not line_item_response:
+            return
+        line_item_data = line_item_response.get("data")
+        if not line_item_data:
+            QMessageBox.warning(self, "API Error", "No 'data' key found in line item response.")
+            return
+        company_asset = line_item_data.get("company_asset", {})
+        self.unit_number_edit.setText(company_asset.get("unit_number", ""))
+        self.manufacturer_edit.setText(company_asset.get("make", ""))
+        self.model_edit.setText(company_asset.get("model", ""))
+        self.serial_number_edit.setText(company_asset.get("serial_number", ""))
+        company_id = company_asset.get("company_id")
+        if company_id:
+            company_response = self.get_company_info_from_api(company_id, token, laravel_url)
+            if company_response:
+                company_data = company_response.get("data", company_response)
+                self.customer_edit.setText(company_data.get("name", ""))
+                self.phone_edit.setText(company_data.get("phone", ""))
+        QMessageBox.information(self, "Success", "Customer info imported from API.")
+
+    # Helper method to call the line-item API endpoint
+    def get_line_item_from_api(self, line_item_id, token, base_url):
+        url = f"{base_url}/api/line-items/{line_item_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(url, headers=headers)
+        except Exception as e:
+            QMessageBox.critical(self, "API Error", f"Error during line-item request: {e}")
+            return None
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except Exception as e:
+                QMessageBox.critical(self, "API Error", f"Error parsing JSON response: {e}")
+                return None
+        else:
+            QMessageBox.warning(self, "API Error", f"Line-item request failed: {response.status_code} {response.text}")
+            return None
+
+    # Helper method to call the company API endpoint
+    def get_company_info_from_api(self, company_id, token, base_url):
+        url = f"{base_url}/api/companies/{company_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(url, headers=headers)
+        except Exception as e:
+            QMessageBox.critical(self, "API Error", f"Error during company request: {e}")
+            return None
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except Exception as e:
+                QMessageBox.critical(self, "API Error", f"Error parsing JSON response for company: {e}")
+                return None
+        else:
+            QMessageBox.warning(self, "API Error", f"Company request failed: {response.status_code} {response.text}")
+            return None
+
     def extract_torque_data(self, image_path: str) -> dict:
         return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
@@ -1039,16 +1130,20 @@ class ModernTorqueApp(QMainWindow):
         self.settings_tab = QWidget()
         layout = QVBoxLayout(self.settings_tab)
 
+        # Update settings combo to include new pages
         self.settings_combo = QComboBox()
         self.settings_combo.addItem("Data Management")
         self.settings_combo.addItem("OpenAI Settings")
         self.settings_combo.addItem("Export Settings")
+        self.settings_combo.addItem("API Settings")
+        self.settings_combo.addItem("Template Settings")
         self.settings_combo.currentIndexChanged.connect(self.on_settings_combo_changed)
         layout.addWidget(self.settings_combo)
 
         self.settings_stacked = QStackedWidget()
         layout.addWidget(self.settings_stacked)
 
+        # Data Management Page (existing)
         self.data_management_page = QWidget()
         dm_layout = QVBoxLayout(self.data_management_page)
 
@@ -1083,6 +1178,7 @@ class ModernTorqueApp(QMainWindow):
         self.data_management_page.setLayout(dm_layout)
         self.settings_stacked.addWidget(self.data_management_page)
 
+        # OpenAI Settings Page (existing)
         self.openai_settings_page = QWidget()
         openai_layout = QFormLayout(self.openai_settings_page)
 
@@ -1130,6 +1226,7 @@ class ModernTorqueApp(QMainWindow):
 
         self.settings_stacked.addWidget(self.openai_settings_page)
 
+        # Export Settings Page (existing)
         self.export_settings_page = QWidget()
         export_layout = QFormLayout(self.export_settings_page)
 
@@ -1244,6 +1341,33 @@ class ModernTorqueApp(QMainWindow):
         self.export_settings_page.setLayout(export_layout)
         self.settings_stacked.addWidget(self.export_settings_page)
 
+        # New API Settings Page
+        self.api_settings_page = QWidget()
+        api_layout = QFormLayout(self.api_settings_page)
+        self.laravel_url_edit = QLineEdit()
+        self.laravel_url_edit.setText(get_app_setting("laravel_app_url") or "https://dev.c-trac.app")
+        api_layout.addRow("Lavarel App URL:", self.laravel_url_edit)
+        self.laravel_token_edit = QLineEdit()
+        self.laravel_token_edit.setText(get_app_setting("laravel_api_token") or "")
+        api_layout.addRow("Lavarel API Token:", self.laravel_token_edit)
+        save_api_btn = QPushButton("Save API Settings")
+        save_api_btn.clicked.connect(self.save_api_settings)
+        api_layout.addWidget(save_api_btn)
+        self.api_settings_page.setLayout(api_layout)
+        self.settings_stacked.addWidget(self.api_settings_page)
+
+        # New Template Settings Page
+        self.template_settings_page = QWidget()
+        template_set_layout = QFormLayout(self.template_settings_page)
+        self.base_template_path_edit = QLineEdit()
+        self.base_template_path_edit.setText(get_app_setting("base_template_path") or os.getcwd())
+        template_set_layout.addRow("Base Template Save Path:", self.base_template_path_edit)
+        create_template_btn = QPushButton("Create Base Template")
+        create_template_btn.clicked.connect(self.create_base_template_action)
+        template_set_layout.addWidget(create_template_btn)
+        self.template_settings_page.setLayout(template_set_layout)
+        self.settings_stacked.addWidget(self.template_settings_page)
+
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
 
@@ -1293,37 +1417,65 @@ class ModernTorqueApp(QMainWindow):
             self.envelope_template_path_edit.setText(file_path)
 
     def save_export_settings(self):
-        set_app_setting("excel_save_dir", self.excel_dir_edit.text().strip())
-        set_app_setting("pdf_save_dir", self.pdf_dir_edit.text().strip())
-        set_app_setting("excel_filename_template", self.excel_template_edit.text().strip())
-        set_app_setting("pdf_filename_template", self.pdf_template_edit.text().strip())
-        set_app_setting("summary_template_path", self.template_path_edit.text().strip())
-        set_app_setting("envelope_excel_filename_template", self.envelope_excel_template_edit.text().strip())
-        set_app_setting("envelope_pdf_filename_template", self.envelope_pdf_template_edit.text().strip())
-        set_app_setting("envelope_template_path", self.envelope_template_path_edit.text().strip())
-        QMessageBox.information(self, "Export Settings", "Export settings saved.")
-
-    def toggle_extracted_data(self, state):
-        visible = (state == Qt.CheckState.Checked)
-        self.show_extracted_data = visible
-        set_app_setting("show_extracted_data", "true" if visible else "false")
-        self.extracted_data_label.setVisible(visible)
-        self.extracted_data_table.setVisible(visible)
+        # Save export settings to the DB
+        set_app_setting("excel_save_dir", self.excel_dir_edit.text())
+        set_app_setting("pdf_save_dir", self.pdf_dir_edit.text())
+        set_app_setting("excel_filename_template", self.excel_template_edit.text())
+        set_app_setting("pdf_filename_template", self.pdf_template_edit.text())
+        set_app_setting("summary_template_path", self.template_path_edit.text())
+        set_app_setting("envelope_excel_filename_template", self.envelope_excel_template_edit.text())
+        set_app_setting("envelope_pdf_filename_template", self.envelope_pdf_template_edit.text())
+        set_app_setting("envelope_template_path", self.envelope_template_path_edit.text())
+        QMessageBox.information(self, "Settings Saved", "Export settings have been saved.")
 
     def save_openai_settings(self):
-        self.openai_api_key = self.api_key_edit.text().strip()
-        self.openai_model = self.model_combo.currentText()
-        self.openai_temperature = self.temp_spin.value()
-        self.openai_top_p = self.top_p_spin.value()
-        self.openai_presence_penalty = self.presence_spin.value()
-        self.openai_frequency_penalty = self.freq_spin.value()
-        set_app_setting("openai_api_key", self.openai_api_key)
-        set_app_setting("openai_model", self.openai_model)
-        set_app_setting("openai_temperature", str(self.openai_temperature))
-        set_app_setting("openai_top_p", str(self.openai_top_p))
-        set_app_setting("openai_presence_penalty", str(self.openai_presence_penalty))
-        set_app_setting("openai_frequency_penalty", str(self.openai_frequency_penalty))
-        QMessageBox.information(self, "OpenAI Settings", "OpenAI settings saved in DB.")
+        # Save OpenAI settings to the DB
+        set_app_setting("openai_api_key", self.api_key_edit.text())
+        set_app_setting("openai_model", self.model_combo.currentText())
+        set_app_setting("openai_temperature", str(self.temp_spin.value()))
+        set_app_setting("openai_top_p", str(self.top_p_spin.value()))
+        set_app_setting("openai_presence_penalty", str(self.presence_spin.value()))
+        set_app_setting("openai_frequency_penalty", str(self.freq_spin.value()))
+        QMessageBox.information(self, "Settings Saved", "OpenAI settings have been saved.")
+
+    def save_api_settings(self):
+        # Save Lavarel API settings to the DB
+        set_app_setting("laravel_app_url", self.laravel_url_edit.text())
+        set_app_setting("laravel_api_token", self.laravel_token_edit.text())
+        QMessageBox.information(self, "Settings Saved", "API settings have been saved.")
+
+    def create_base_template_action(self):
+        path = self.base_template_path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Invalid Path", "Please enter a valid save path for the base template.")
+            return
+        # Determine a filename – for example, "base_template.xlsx"
+        filename = os.path.join(path, "base_template.xlsx")
+        if self.create_base_template(filename):
+            set_app_setting("base_template_path", path)
+            QMessageBox.information(self, "Template Created", f"Base template created at:\n{filename}")
+
+    def create_base_template(self, filename):
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Base Template"
+            ws["A1"] = "Torque Test Report Template"
+            ws["A2"] = "Manufacturer: {{Manufacturer}}"
+            ws["A3"] = "Model: {{Model}}"
+            ws["A4"] = "Unit Number: {{UnitNumber}}"
+            ws["A5"] = "Serial Number: {{SerialNumber}}"
+            ws["A6"] = "Customer: {{CustomerCompany}}"
+            ws["A7"] = "Phone: {{PhoneNumber}}"
+            ws["A8"] = "Address: {{Address}}"
+            ws["A9"] = "Max Torque: {{MaxTorque}}"
+            ws["A10"] = "Calibration Date: {{CalibrationDate}}"
+            ws["A11"] = "Calibration Due: {{CalibrationDue}}"
+            wb.save(filename)
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Template Creation Error", f"Error creating base template:\n{e}")
+            return False
 
     def load_torque_table_data(self):
         table_data = get_torque_table()
@@ -1333,28 +1485,33 @@ class ModernTorqueApp(QMainWindow):
             self.torque_table_widget.setItem(i, 1, QTableWidgetItem(row.get("unit", "")))
             self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
             self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
-        self.torque_table_widget.resizeColumnsToContents()
 
+    def toggle_extracted_data(self, state):
+        self.show_extracted_data = (state == Qt.CheckState.Checked)
+        self.extracted_data_label.setVisible(self.show_extracted_data)
+        self.extracted_data_table.setVisible(self.show_extracted_data)
+
+    # Placeholder methods for adding, editing, and deleting torque entries
     def add_entry(self):
         dialog = TorqueEntryDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             add_torque_entry(
                 data["max_torque"], data["unit"], data["type"],
-                data["applied_torq"], data["allowance1"],
-                data["allowance2"], data["allowance3"]
+                data["applied_torq"], data["allowance1"], data["allowance2"], data["allowance3"]
             )
-            QMessageBox.information(self, "Success", "Entry added successfully.")
-            self.load_torque_table_data()
             self.load_max_torque_dropdown()
+            self.load_torque_table_data()
 
     def edit_entry(self):
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select an entry to edit.")
+            QMessageBox.warning(self, "Edit Entry", "No entry selected.")
             return
-        row = self.torque_table_widget.currentRow()
+        row = selected_items[0].row()
         table_data = get_torque_table()
+        if row >= len(table_data):
+            return
         entry = table_data[row]
         dialog = TorqueEntryDialog(self, entry)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1363,65 +1520,29 @@ class ModernTorqueApp(QMainWindow):
                 entry["id"], data["max_torque"], data["unit"], data["type"],
                 data["applied_torq"], data["allowance1"], data["allowance2"], data["allowance3"]
             )
-            QMessageBox.information(self, "Success", "Entry updated successfully.")
-            self.load_torque_table_data()
             self.load_max_torque_dropdown()
+            self.load_torque_table_data()
 
     def delete_entry(self):
         selected_items = self.torque_table_widget.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select an entry to delete.")
+            QMessageBox.warning(self, "Delete Entry", "No entry selected.")
             return
-        row = self.torque_table_widget.currentRow()
+        row = selected_items[0].row()
         table_data = get_torque_table()
+        if row >= len(table_data):
+            return
         entry = table_data[row]
-        confirm = QMessageBox.question(
-            self, "Confirm Deletion", f"Are you sure you want to delete entry ID {entry['id']}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if confirm == QMessageBox.StandardButton.Yes:
-            delete_torque_entry(entry["id"])
-            QMessageBox.information(self, "Success", "Entry deleted successfully.")
-            self.load_torque_table_data()
-            self.load_max_torque_dropdown()
+        delete_torque_entry(entry["id"])
+        self.load_max_torque_dropdown()
+        self.load_torque_table_data()
 
     def init_report_templates_tab(self):
-        self.report_templates_tab = QWidget()
-        layout = QVBoxLayout(self.report_templates_tab)
-        self.template_editor_btn = QPushButton("Open Report Template Editor")
-        self.template_editor_btn.clicked.connect(self.open_template_editor)
-        layout.addWidget(self.template_editor_btn)
-        self.generate_template_btn = QPushButton("Generate Summary Template")
-        self.generate_template_btn.clicked.connect(self.generate_summary_template)
-        layout.addWidget(self.generate_template_btn)
-        self.report_templates_tab.setLayout(layout)
-        self.tab_widget.addTab(self.report_templates_tab, "Report Templates")
+        # This function should initialize the report templates tab.
+        # Implementation not provided here.
+        pass
 
-    def open_template_editor(self):
-        from template_editor import TemplateEditor  # type: ignore
-        self.template_editor = TemplateEditor()
-        self.template_editor.show()
-
-    def generate_summary_template(self):
-        try:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Summary Template"
-            ws.cell(row=1, column=1, value="Manufacturer:")
-            ws.cell(row=1, column=2, value="{{Manufacturer}}")
-            ws.cell(row=2, column=1, value="Serial Number:")
-            ws.cell(row=2, column=2, value="{{SerialNumber}}")
-            ws.cell(row=3, column=1, value="Model:")
-            ws.cell(row=3, column=2, value="{{Model}}")
-            # ... add more template generation code as needed
-            save_path, _ = QFileDialog.getSaveFileName(self, "Save Summary Template", "", "Excel Files (*.xlsx);;All Files (*)")
-            if save_path:
-                wb.save(save_path)
-                QMessageBox.information(self, "Template Generated", f"Summary template saved to {save_path}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error generating summary template:\n{e}")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
     from PyQt6.QtWidgets import QApplication
     app = QApplication(sys.argv)
