@@ -94,6 +94,10 @@ class SerialReaderWorker(QThread):
         self.stop_event.set()
 
 def calc_applied_torques(max_torque: float) -> list[float]:
+    """
+    Given a maximum torque, calculates typical applied torques at ~92%, ~58%, and ~33%.
+    Rounds each to the nearest 10 for convenience.
+    """
     factors = [0.916, 0.583, 0.333]
     results = []
     for f in factors:
@@ -103,6 +107,10 @@ def calc_applied_torques(max_torque: float) -> list[float]:
     return results
 
 def calc_allowance_range(applied_val: float) -> str:
+    """
+    Creates a min-max allowance range string with a 4-6% tolerance
+    depending on how large 'applied_val' is.
+    """
     if applied_val < 10:
         tolerance = 0.06
     else:
@@ -112,7 +120,10 @@ def calc_allowance_range(applied_val: float) -> str:
     return f"{round(low,1)} - {round(high,1)}"
 
 def generate_filename(template: str, variables: dict) -> str:
-    """Replace placeholders in the template with corresponding values."""
+    """
+    Replaces placeholders in 'template' (like {{CustomerCompany}})
+    with actual values from 'variables' dict.
+    """
     filename = template
     for key, value in variables.items():
         placeholder = "{{" + key + "}}"
@@ -217,7 +228,7 @@ class ModernTorqueApp(QMainWindow):
         self.serial_worker = None
         self.selected_row = None
 
-        # OpenAI settings (defaults)
+        # ------------------ LOAD OpenAI SETTINGS FROM DB ------------------
         self.openai_api_key = None
         self.openai_model = "gpt-4-turbo"
         self.openai_temperature = 0.7
@@ -225,7 +236,6 @@ class ModernTorqueApp(QMainWindow):
         self.openai_presence_penalty = 0.0
         self.openai_frequency_penalty = 0.0
 
-        # Load saved API key and additional OpenAI settings from DB
         saved_key = get_app_setting("openai_api_key")
         if saved_key:
             self.openai_api_key = saved_key
@@ -409,6 +419,7 @@ class ModernTorqueApp(QMainWindow):
         self.init_settings_tab()
         self.init_report_templates_tab()
 
+    # ------------------------------ TESTING TAB ------------------------------
     def init_testing_tab(self):
         self.testing_tab = QWidget()
         main_layout = QVBoxLayout(self.testing_tab)
@@ -477,7 +488,7 @@ class ModernTorqueApp(QMainWindow):
         self.port_combo.addItems(self.get_serial_ports())
         info_grid.addWidget(self.port_combo, row, 1)
 
-        # Add live torque label to the top grid in the same row at column 3
+        # Add live torque label in the same row
         self.live_torque_label = QLabel("Live Torque: --")
         self.live_torque_label.setStyleSheet("font-size: 48px; padding: 5px;")
         info_grid.addWidget(self.live_torque_label, row, 3)
@@ -498,6 +509,7 @@ class ModernTorqueApp(QMainWindow):
 
         self.load_max_torque_dropdown()
 
+        # Buttons row
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Begin Test")
         self.start_btn.clicked.connect(self.start_test)
@@ -508,7 +520,7 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-        # Updated Upload Customer Info button with an extra menu item for API import via link.
+        # Updated Upload Customer Info button with an extra menu item for API import
         self.upload_info_btn = QToolButton()
         self.upload_info_btn.setText("Import Customer Info")
         self.upload_info_btn.setMinimumWidth(220)
@@ -517,7 +529,7 @@ class ModernTorqueApp(QMainWindow):
         action_upload_file = QAction("Upload image from computer", self)
         action_clipboard = QAction("Upload image/screenshot from clipboard", self)
         action_webcam = QAction("Take image from web camera", self)
-        action_link = QAction("Import info from link", self)  # New action for API extraction via link
+        action_link = QAction("Import info from link", self)
         menu.addAction(action_upload_file)
         menu.addAction(action_clipboard)
         menu.addAction(action_webcam)
@@ -526,14 +538,13 @@ class ModernTorqueApp(QMainWindow):
         action_upload_file.triggered.connect(self.upload_customer_info_from_file)
         action_clipboard.triggered.connect(self.upload_customer_info_from_clipboard)
         action_webcam.triggered.connect(self.upload_customer_info_from_webcam)
-        action_link.triggered.connect(self.upload_customer_info_from_link)  # Connect new function
+        action_link.triggered.connect(self.upload_customer_info_from_link)
         btn_layout.addWidget(self.upload_info_btn)
 
         self.export_summary_btn = QPushButton("Export Summary")
         self.export_summary_btn.clicked.connect(self.export_summary)
         btn_layout.addWidget(self.export_summary_btn)
 
-        # New: Add Export Envelope button
         self.export_envelope_btn = QPushButton("Export Envelope")
         self.export_envelope_btn.clicked.connect(self.export_envelope)
         btn_layout.addWidget(self.export_envelope_btn)
@@ -662,6 +673,296 @@ class ModernTorqueApp(QMainWindow):
                     else:
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
+    # -------------------- IMPORTING CUSTOMER INFO (API / OCR) --------------------
+    def upload_customer_info_from_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Image", "",
+            "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
+        )
+        if not file_path:
+            return
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        extracted_data = self.extract_torque_data(file_path)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
+            return
+        self.update_extracted_data_table(extracted_data)
+
+    def upload_customer_info_from_clipboard(self):
+        clipboard = QApplication.clipboard()
+        image = clipboard.image()
+        if image.isNull():
+            QMessageBox.warning(self, "Clipboard Empty", "No image found in clipboard.")
+            return
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp_file.close()
+        if not image.save(temp_file.name, "PNG"):
+            QMessageBox.critical(self, "Error", "Failed to save clipboard image.")
+            return
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        extracted_data = self.extract_torque_data(temp_file.name)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
+            return
+        self.update_extracted_data_table(extracted_data)
+
+    def upload_customer_info_from_webcam(self):
+        try:
+            import cv2
+        except ImportError:
+            QMessageBox.critical(self, "Error", "OpenCV is not installed. Please install opencv-python.")
+            return
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            QMessageBox.critical(self, "Error", "Could not open web camera.")
+            return
+        cv2.namedWindow("Webcam - Press Space to Capture", cv2.WINDOW_NORMAL)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                QMessageBox.critical(self, "Error", "Failed to capture image from web camera.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+            cv2.imshow("Webcam - Press Space to Capture", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == 32:  # Space to capture
+                break
+            elif key == 27:  # Esc to cancel
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+        cap.release()
+        cv2.destroyAllWindows()
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        temp_file.close()
+        cv2.imwrite(temp_file.name, frame)
+        if not self.openai_api_key:
+            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
+            return
+        extracted_data = self.extract_torque_data(temp_file.name)
+        if not extracted_data:
+            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
+            return
+        self.update_extracted_data_table(extracted_data)
+
+    def upload_customer_info_from_link(self):
+        """
+        Imports customer info from a numeric ID in a link (in the clipboard),
+        calls the Laravel API, and sets the relevant UI fields.
+        Now also attempts to auto-select the correct max torque in the dropdown
+        if found in 'additional_info_fields'.
+        """
+        clipboard = QApplication.clipboard()
+        text = clipboard.text().strip()
+        if not text:
+            QMessageBox.warning(self, "Clipboard Empty", "No text found in clipboard.")
+            return
+        # Extract the last numeric sequence from the link
+        match = re.search(r'(\d+)(?!.*\d)', text)
+        if not match:
+            QMessageBox.warning(self, "Invalid Link", "No numeric ID found in the clipboard text.")
+            return
+        line_item_id = match.group(1)
+        token = get_app_setting("laravel_api_token")
+        if not token:
+            QMessageBox.critical(self, "Error", "Laravel API token not set in settings.")
+            return
+        laravel_url = get_app_setting("laravel_app_url")
+        if not laravel_url:
+            QMessageBox.critical(self, "Error", "Laravel app URL not set in settings.")
+            return
+
+        # Call the API to get line-item details
+        line_item_response = self.get_line_item_from_api(line_item_id, token, laravel_url)
+        if not line_item_response:
+            return
+        line_item_data = line_item_response.get("data")
+        if not line_item_data:
+            QMessageBox.warning(self, "API Error", "No 'data' key found in line item response.")
+            return
+
+        company_asset = line_item_data.get("company_asset", {})
+        self.unit_number_edit.setText(company_asset.get("unit_number", ""))
+        self.manufacturer_edit.setText(company_asset.get("make", ""))
+        self.model_edit.setText(company_asset.get("model", ""))
+        self.serial_number_edit.setText(company_asset.get("serial_number", ""))
+
+        # If there's a known max_torque in the additional_info_fields, auto-select it
+        asset_info = company_asset.get("additional_info_fields", {})
+        max_torque_str = str(asset_info.get("max_torque", "")).strip()
+        torque_unit_str = str(asset_info.get("torque_unit", "")).strip()
+        if max_torque_str:
+            try:
+                extracted_val = float(max_torque_str)
+                self.auto_select_max_torque(extracted_val, torque_unit_str)
+            except ValueError:
+                pass
+
+        # Also fetch company info if there's a company_id
+        company_id = company_asset.get("company_id")
+        if company_id:
+            company_response = self.get_company_info_from_api(company_id, token, laravel_url)
+            if company_response:
+                company_data = company_response.get("data", company_response)
+                self.customer_edit.setText(company_data.get("name", ""))
+                self.phone_edit.setText(company_data.get("phone", ""))
+
+        QMessageBox.information(self, "Success", "Customer info imported from API.")
+
+    # --------------------- LARAVEL API HELPER CALLS ---------------------
+    def get_line_item_from_api(self, line_item_id, token, base_url):
+        url = f"{base_url}/api/line-items/{line_item_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(url, headers=headers)
+        except Exception as e:
+            QMessageBox.critical(self, "API Error", f"Error during line-item request: {e}")
+            return None
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except Exception as e:
+                QMessageBox.critical(self, "API Error", f"Error parsing JSON response: {e}")
+                return None
+        else:
+            QMessageBox.warning(self, "API Error", f"Line-item request failed: {response.status_code} {response.text}")
+            return None
+
+    def get_company_info_from_api(self, company_id, token, base_url):
+        url = f"{base_url}/api/companies/{company_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(url, headers=headers)
+        except Exception as e:
+            QMessageBox.critical(self, "API Error", f"Error during company request: {e}")
+            return None
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except Exception as e:
+                QMessageBox.critical(self, "API Error", f"Error parsing JSON response for company: {e}")
+                return None
+        else:
+            QMessageBox.warning(self, "API Error", f"Company request failed: {response.status_code} {response.text}")
+            return None
+
+    # ------------------------ OCR Extraction ------------------------
+    def extract_torque_data(self, image_path: str) -> dict:
+        """
+        Perform OCR extraction using OpenAI to get fields:
+        manufacturer, model, unit, serial, customer, phone, address,
+        max_torque, torque_unit
+        """
+        return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
+
+    def update_extracted_data_table(self, data: dict):
+        """
+        After image-based OCR extraction, fill in UI fields
+        and auto-select the max torque in the combo if possible.
+        """
+        self.manufacturer_edit.setText(data.get("manufacturer", ""))
+        self.model_edit.setText(data.get("model", ""))
+        self.unit_number_edit.setText(data.get("unit", ""))
+        self.serial_number_edit.setText(data.get("serial", ""))
+        self.customer_edit.setText(data.get("customer", ""))
+        self.phone_edit.setText(data.get("phone", ""))
+        self.address_edit.setText(data.get("address", ""))
+
+        max_torque_raw = data.get("max_torque", "")
+        torque_unit_str = str(data.get("torque_unit", "")).strip()
+
+        max_torque_str = str(max_torque_raw).strip()
+        if max_torque_str:
+            try:
+                extracted_val = float(max_torque_str)
+                self.auto_select_max_torque(extracted_val, torque_unit_str)
+            except ValueError:
+                pass
+
+        fields = [
+            ("Manufacturer", data.get("manufacturer", "")),
+            ("Model", data.get("model", "")),
+            ("Unit #", data.get("unit", "")),
+            ("Serial Number", data.get("serial", "")),
+            ("Customer/Company", data.get("customer", "")),
+            ("Phone Number", data.get("phone", "")),
+            ("Address", data.get("address", "")),
+            ("Max Torque", max_torque_str),
+            ("Torque Unit", torque_unit_str)
+        ]
+        self.extracted_data_table.setRowCount(len(fields))
+        for i, (field, value) in enumerate(fields):
+            self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
+            self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
+
+    def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
+        """
+        Looks through the existing TorqueTable entries to see if any
+        are "close" to the extracted_val (converted to Nm if needed).
+        If so, sets that entry as selected in the max_torque_combo.
+        """
+        # Retrieve synonyms from the DB settings (or use defaults)
+        ft_lb_synonyms_str = get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs"
+        in_lb_synonyms_str = get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs"
+        nm_synonyms_str = get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m."
+
+        FT_LB_SYNONYMS = set(s.strip() for s in ft_lb_synonyms_str.split(",") if s.strip())
+        IN_LB_SYNONYMS = set(s.strip() for s in in_lb_synonyms_str.split(",") if s.strip())
+        NM_SYNONYMS = set(s.strip() for s in nm_synonyms_str.split(",") if s.strip())
+
+        def ftlb_to_nm(val):
+            return val * 1.35582
+
+        def inlb_to_nm(val):
+            return val * 0.113
+
+        extracted_unit_lower = extracted_unit.lower().strip()
+        if extracted_unit_lower in FT_LB_SYNONYMS:
+            extracted_val_nm = ftlb_to_nm(extracted_val)
+        elif extracted_unit_lower in IN_LB_SYNONYMS:
+            extracted_val_nm = inlb_to_nm(extracted_val)
+        elif extracted_unit_lower in NM_SYNONYMS:
+            extracted_val_nm = extracted_val
+        else:
+            # If unknown, assume user typed in Nm or the number is already correct
+            extracted_val_nm = extracted_val
+
+        table_data = get_torque_table()
+        # Tweak tolerance: now using 10% or at least 2.0 Nm
+        tolerance_base = max(extracted_val_nm * 0.10, 2.0)
+
+        for i, row in enumerate(table_data):
+            db_torque = row["max_torque"]
+            db_unit_lower = row["unit"].lower().strip()
+            if db_unit_lower in FT_LB_SYNONYMS:
+                db_torque_nm = ftlb_to_nm(db_torque)
+            elif db_unit_lower in IN_LB_SYNONYMS:
+                db_torque_nm = inlb_to_nm(db_torque)
+            elif db_unit_lower in NM_SYNONYMS:
+                db_torque_nm = db_torque
+            else:
+                db_torque_nm = db_torque
+
+            if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
+                self.max_torque_combo.setCurrentIndex(i)
+                self.selected_row = row
+                self.display_pre_test_rows()
+                return
+
+    # ------------------------------ EXPORTING SUMMARY ------------------------------
     def export_summary(self):
         row_count = self.torque_table.rowCount()
         headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
@@ -761,6 +1062,7 @@ class ModernTorqueApp(QMainWindow):
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
 
+        # Replace placeholders in the template
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -787,7 +1089,7 @@ class ModernTorqueApp(QMainWindow):
 
         wb.save(output_path)
 
-    # New method for Envelope export
+    # ----------------------------- EXPORTING ENVELOPE -----------------------------
     def export_envelope(self):
         row_count = self.torque_table.rowCount()
         headers = ["Applied Torque", "Min - Max Allowance", "Test 1", "Test 2", "Test 3", "Test 4", "Test 5"]
@@ -870,280 +1172,25 @@ class ModernTorqueApp(QMainWindow):
             msg += f"PDF: {envelope_pdf_path}"
         QMessageBox.information(self, "Export Envelope", msg)
 
-    def upload_customer_info_from_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image", "",
-            "Image Files (*.png *.jpg *.jpeg *.bmp);;All Files (*)"
-        )
-        if not file_path:
-            return
-        if not self.openai_api_key:
-            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
-            return
-        extracted_data = self.extract_torque_data(file_path)
-        if not extracted_data:
-            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
-            return
-        self.update_extracted_data_table(extracted_data)
-
-    def upload_customer_info_from_clipboard(self):
-        clipboard = QApplication.clipboard()
-        image = clipboard.image()
-        if image.isNull():
-            QMessageBox.warning(self, "Clipboard Empty", "No image found in clipboard.")
-            return
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        temp_file.close()
-        if not image.save(temp_file.name, "PNG"):
-            QMessageBox.critical(self, "Error", "Failed to save clipboard image.")
-            return
-        if not self.openai_api_key:
-            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
-            return
-        extracted_data = self.extract_torque_data(temp_file.name)
-        if not extracted_data:
-            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
-            return
-        self.update_extracted_data_table(extracted_data)
-
-    def upload_customer_info_from_webcam(self):
-        try:
-            import cv2
-        except ImportError:
-            QMessageBox.critical(self, "Error", "OpenCV is not installed. Please install opencv-python.")
-            return
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            QMessageBox.critical(self, "Error", "Could not open web camera.")
-            return
-        cv2.namedWindow("Webcam - Press Space to Capture", cv2.WINDOW_NORMAL)
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                QMessageBox.critical(self, "Error", "Failed to capture image from web camera.")
-                cap.release()
-                cv2.destroyAllWindows()
-                return
-            cv2.imshow("Webcam - Press Space to Capture", frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key == 32:
-                break
-            elif key == 27:
-                cap.release()
-                cv2.destroyAllWindows()
-                return
-        cap.release()
-        cv2.destroyAllWindows()
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        temp_file.close()
-        cv2.imwrite(temp_file.name, frame)
-        if not self.openai_api_key:
-            QMessageBox.critical(self, "Error", "OpenAI API Key not set.")
-            return
-        extracted_data = self.extract_torque_data(temp_file.name)
-        if not extracted_data:
-            QMessageBox.warning(self, "Extraction Failed", "No data extracted or an error occurred.")
-            return
-        self.update_extracted_data_table(extracted_data)
-
-    # New function: Import customer info via API using a link from clipboard.
-    def upload_customer_info_from_link(self):
-        clipboard = QApplication.clipboard()
-        text = clipboard.text().strip()
-        if not text:
-            QMessageBox.warning(self, "Clipboard Empty", "No text found in clipboard.")
-            return
-        # Extract the last numeric sequence from the link
-        match = re.search(r'(\d+)(?!.*\d)', text)
-        if not match:
-            QMessageBox.warning(self, "Invalid Link", "No numeric ID found in the clipboard text.")
-            return
-        line_item_id = match.group(1)
-        token = get_app_setting("laravel_api_token")
-        if not token:
-            QMessageBox.critical(self, "Error", "Laravel API token not set in settings.")
-            return
-        laravel_url = get_app_setting("laravel_app_url")
-        if not laravel_url:
-            QMessageBox.critical(self, "Error", "Laravel app URL not set in settings.")
-            return
-
-        # Call the API to get line-item details
-        line_item_response = self.get_line_item_from_api(line_item_id, token, laravel_url)
-        if not line_item_response:
-            return
-        line_item_data = line_item_response.get("data")
-        if not line_item_data:
-            QMessageBox.warning(self, "API Error", "No 'data' key found in line item response.")
-            return
-        company_asset = line_item_data.get("company_asset", {})
-        self.unit_number_edit.setText(company_asset.get("unit_number", ""))
-        self.manufacturer_edit.setText(company_asset.get("make", ""))
-        self.model_edit.setText(company_asset.get("model", ""))
-        self.serial_number_edit.setText(company_asset.get("serial_number", ""))
-        company_id = company_asset.get("company_id")
-        if company_id:
-            company_response = self.get_company_info_from_api(company_id, token, laravel_url)
-            if company_response:
-                company_data = company_response.get("data", company_response)
-                self.customer_edit.setText(company_data.get("name", ""))
-                self.phone_edit.setText(company_data.get("phone", ""))
-        QMessageBox.information(self, "Success", "Customer info imported from API.")
-
-    # Helper method to call the line-item API endpoint
-    def get_line_item_from_api(self, line_item_id, token, base_url):
-        url = f"{base_url}/api/line-items/{line_item_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
-        }
-        try:
-            response = requests.get(url, headers=headers)
-        except Exception as e:
-            QMessageBox.critical(self, "API Error", f"Error during line-item request: {e}")
-            return None
-
-        if response.status_code == 200:
-            try:
-                return response.json()
-            except Exception as e:
-                QMessageBox.critical(self, "API Error", f"Error parsing JSON response: {e}")
-                return None
-        else:
-            QMessageBox.warning(self, "API Error", f"Line-item request failed: {response.status_code} {response.text}")
-            return None
-
-    # Helper method to call the company API endpoint
-    def get_company_info_from_api(self, company_id, token, base_url):
-        url = f"{base_url}/api/companies/{company_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
-        }
-        try:
-            response = requests.get(url, headers=headers)
-        except Exception as e:
-            QMessageBox.critical(self, "API Error", f"Error during company request: {e}")
-            return None
-
-        if response.status_code == 200:
-            try:
-                return response.json()
-            except Exception as e:
-                QMessageBox.critical(self, "API Error", f"Error parsing JSON response for company: {e}")
-                return None
-        else:
-            QMessageBox.warning(self, "API Error", f"Company request failed: {response.status_code} {response.text}")
-            return None
-
-    def extract_torque_data(self, image_path: str) -> dict:
-        return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
-
-    def update_extracted_data_table(self, data: dict):
-        self.manufacturer_edit.setText(data.get("manufacturer", ""))
-        self.model_edit.setText(data.get("model", ""))
-        self.unit_number_edit.setText(data.get("unit", ""))
-        self.serial_number_edit.setText(data.get("serial", ""))
-        self.customer_edit.setText(data.get("customer", ""))
-        self.phone_edit.setText(data.get("phone", ""))
-        self.address_edit.setText(data.get("address", ""))
-
-        max_torque_raw = data.get("max_torque", "")
-        torque_unit_str = str(data.get("torque_unit", "")).strip()
-
-        max_torque_str = str(max_torque_raw).strip()
-        if max_torque_str:
-            try:
-                extracted_val = float(max_torque_str)
-                self.auto_select_max_torque(extracted_val, torque_unit_str)
-            except ValueError:
-                pass
-
-        fields = [
-            ("Manufacturer", data.get("manufacturer", "")),
-            ("Model", data.get("model", "")),
-            ("Unit #", data.get("unit", "")),
-            ("Serial Number", data.get("serial", "")),
-            ("Customer/Company", data.get("customer", "")),
-            ("Phone Number", data.get("phone", "")),
-            ("Address", data.get("address", "")),
-            ("Max Torque", max_torque_str),
-            ("Torque Unit", torque_unit_str)
-        ]
-        self.extracted_data_table.setRowCount(len(fields))
-        for i, (field, value) in enumerate(fields):
-            self.extracted_data_table.setItem(i, 0, QTableWidgetItem(field))
-            self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
-
-    def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
-        FT_LB_SYNONYMS = {
-            "ft/lb", "ft-lb", "ft.lb", "ft lb",
-            "ft/lbs", "ft-lbs", "ft.lbs", "ft lbs"
-        }
-        IN_LB_SYNONYMS = {
-            "in/lb", "in-lb", "in.lb", "in lb",
-            "in/lbs", "in-lbs", "in.lbs", "in lbs"
-        }
-        NM_SYNONYMS = {
-            "nm", "n.m", "n*m", "nm.", "n.m."
-        }
-
-        def ftlb_to_nm(val):
-            return val * 1.35582
-
-        def inlb_to_nm(val):
-            return val * 0.113
-
-        extracted_unit_lower = extracted_unit.lower().strip()
-
-        if extracted_unit_lower in FT_LB_SYNONYMS:
-            extracted_val_nm = ftlb_to_nm(extracted_val)
-        elif extracted_unit_lower in IN_LB_SYNONYMS:
-            extracted_val_nm = inlb_to_nm(extracted_val)
-        elif extracted_unit_lower in NM_SYNONYMS:
-            extracted_val_nm = extracted_val
-        else:
-            extracted_val_nm = extracted_val
-
-        table_data = get_torque_table()
-        tolerance_base = max(extracted_val_nm * 0.05, 1.0)
-
-        for i, row in enumerate(table_data):
-            db_torque = row["max_torque"]
-            db_unit_lower = row["unit"].lower().strip()
-            if db_unit_lower in FT_LB_SYNONYMS:
-                db_torque_nm = ftlb_to_nm(db_torque)
-            elif db_unit_lower in IN_LB_SYNONYMS:
-                db_torque_nm = inlb_to_nm(db_torque)
-            elif db_unit_lower in NM_SYNONYMS:
-                db_torque_nm = db_torque
-            else:
-                db_torque_nm = db_torque
-
-            if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
-                self.max_torque_combo.setCurrentIndex(i)
-                self.selected_row = row
-                self.display_pre_test_rows()
-                return
-
+    # ------------------------------ SETTINGS TAB ------------------------------
     def init_settings_tab(self):
         self.settings_tab = QWidget()
         layout = QVBoxLayout(self.settings_tab)
 
-        # Update settings combo to include new pages
         self.settings_combo = QComboBox()
         self.settings_combo.addItem("Data Management")
         self.settings_combo.addItem("OpenAI Settings")
         self.settings_combo.addItem("Export Settings")
         self.settings_combo.addItem("API Settings")
         self.settings_combo.addItem("Template Settings")
+        self.settings_combo.addItem("Unit Synonyms")
         self.settings_combo.currentIndexChanged.connect(self.on_settings_combo_changed)
         layout.addWidget(self.settings_combo)
 
         self.settings_stacked = QStackedWidget()
         layout.addWidget(self.settings_stacked)
 
-        # Data Management Page (existing)
+        # ---------------- Data Management Page ----------------
         self.data_management_page = QWidget()
         dm_layout = QVBoxLayout(self.data_management_page)
 
@@ -1178,7 +1225,7 @@ class ModernTorqueApp(QMainWindow):
         self.data_management_page.setLayout(dm_layout)
         self.settings_stacked.addWidget(self.data_management_page)
 
-        # OpenAI Settings Page (existing)
+        # ---------------- OpenAI Settings Page ----------------
         self.openai_settings_page = QWidget()
         openai_layout = QFormLayout(self.openai_settings_page)
 
@@ -1226,7 +1273,7 @@ class ModernTorqueApp(QMainWindow):
 
         self.settings_stacked.addWidget(self.openai_settings_page)
 
-        # Export Settings Page (existing)
+        # ---------------- Export Settings Page ----------------
         self.export_settings_page = QWidget()
         export_layout = QFormLayout(self.export_settings_page)
 
@@ -1298,7 +1345,7 @@ class ModernTorqueApp(QMainWindow):
         self.pdf_var_combo.currentIndexChanged.connect(self.on_pdf_var_changed)
         pdf_template_layout.addWidget(self.pdf_var_combo)
         export_layout.addRow("PDF Filename Template:", pdf_template_layout)
-        
+
         template_path_layout = QHBoxLayout()
         self.template_path_edit = QLineEdit()
         self.template_path_edit.setText(get_app_setting("summary_template_path") or "summary_template.xlsx")
@@ -1308,7 +1355,7 @@ class ModernTorqueApp(QMainWindow):
         template_path_layout.addWidget(template_browse_btn)
         export_layout.addRow("Summary Template File:", template_path_layout)
 
-        # New Envelope Export Settings
+        # Envelope Export Settings
         self.envelope_excel_checkbox = QCheckBox("Enable Envelope Excel Export")
         self.envelope_excel_checkbox.setChecked(False)
         export_layout.addRow("", self.envelope_excel_checkbox)
@@ -1341,7 +1388,7 @@ class ModernTorqueApp(QMainWindow):
         self.export_settings_page.setLayout(export_layout)
         self.settings_stacked.addWidget(self.export_settings_page)
 
-        # New API Settings Page
+        # ---------------- API Settings Page ----------------
         self.api_settings_page = QWidget()
         api_layout = QFormLayout(self.api_settings_page)
         self.laravel_url_edit = QLineEdit()
@@ -1356,7 +1403,7 @@ class ModernTorqueApp(QMainWindow):
         self.api_settings_page.setLayout(api_layout)
         self.settings_stacked.addWidget(self.api_settings_page)
 
-        # New Template Settings Page
+        # ---------------- Template Settings Page ----------------
         self.template_settings_page = QWidget()
         template_set_layout = QFormLayout(self.template_settings_page)
         self.base_template_path_edit = QLineEdit()
@@ -1367,6 +1414,24 @@ class ModernTorqueApp(QMainWindow):
         template_set_layout.addWidget(create_template_btn)
         self.template_settings_page.setLayout(template_set_layout)
         self.settings_stacked.addWidget(self.template_settings_page)
+
+        # ---------------- Unit Synonyms Settings Page ----------------
+        self.unit_synonyms_page = QWidget()
+        unit_synonyms_layout = QFormLayout(self.unit_synonyms_page)
+        self.ft_lb_synonyms_edit = QLineEdit()
+        self.ft_lb_synonyms_edit.setText(get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs")
+        unit_synonyms_layout.addRow("FT/LB Synonyms:", self.ft_lb_synonyms_edit)
+        self.in_lb_synonyms_edit = QLineEdit()
+        self.in_lb_synonyms_edit.setText(get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs")
+        unit_synonyms_layout.addRow("IN/LB Synonyms:", self.in_lb_synonyms_edit)
+        self.nm_synonyms_edit = QLineEdit()
+        self.nm_synonyms_edit.setText(get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m.")
+        unit_synonyms_layout.addRow("NM Synonyms:", self.nm_synonyms_edit)
+        save_unit_synonyms_btn = QPushButton("Save Unit Synonyms")
+        save_unit_synonyms_btn.clicked.connect(self.save_unit_synonyms)
+        unit_synonyms_layout.addWidget(save_unit_synonyms_btn)
+        self.unit_synonyms_page.setLayout(unit_synonyms_layout)
+        self.settings_stacked.addWidget(self.unit_synonyms_page)
 
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
@@ -1417,7 +1482,6 @@ class ModernTorqueApp(QMainWindow):
             self.envelope_template_path_edit.setText(file_path)
 
     def save_export_settings(self):
-        # Save export settings to the DB
         set_app_setting("excel_save_dir", self.excel_dir_edit.text())
         set_app_setting("pdf_save_dir", self.pdf_dir_edit.text())
         set_app_setting("excel_filename_template", self.excel_template_edit.text())
@@ -1429,7 +1493,6 @@ class ModernTorqueApp(QMainWindow):
         QMessageBox.information(self, "Settings Saved", "Export settings have been saved.")
 
     def save_openai_settings(self):
-        # Save OpenAI settings to the DB
         set_app_setting("openai_api_key", self.api_key_edit.text())
         set_app_setting("openai_model", self.model_combo.currentText())
         set_app_setting("openai_temperature", str(self.temp_spin.value()))
@@ -1439,17 +1502,21 @@ class ModernTorqueApp(QMainWindow):
         QMessageBox.information(self, "Settings Saved", "OpenAI settings have been saved.")
 
     def save_api_settings(self):
-        # Save Lavarel API settings to the DB
         set_app_setting("laravel_app_url", self.laravel_url_edit.text())
         set_app_setting("laravel_api_token", self.laravel_token_edit.text())
         QMessageBox.information(self, "Settings Saved", "API settings have been saved.")
+
+    def save_unit_synonyms(self):
+        set_app_setting("synonyms_ft_lb", self.ft_lb_synonyms_edit.text())
+        set_app_setting("synonyms_in_lb", self.in_lb_synonyms_edit.text())
+        set_app_setting("synonyms_nm", self.nm_synonyms_edit.text())
+        QMessageBox.information(self, "Settings Saved", "Unit synonyms have been saved.")
 
     def create_base_template_action(self):
         path = self.base_template_path_edit.text().strip()
         if not path:
             QMessageBox.warning(self, "Invalid Path", "Please enter a valid save path for the base template.")
             return
-        # Determine a filename – for example, "base_template.xlsx"
         filename = os.path.join(path, "base_template.xlsx")
         if self.create_base_template(filename):
             set_app_setting("base_template_path", path)
@@ -1477,6 +1544,7 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.critical(self, "Template Creation Error", f"Error creating base template:\n{e}")
             return False
 
+    # Load the main torque table data (Data Management tab)
     def load_torque_table_data(self):
         table_data = get_torque_table()
         self.torque_table_widget.setRowCount(len(table_data))
@@ -1491,7 +1559,7 @@ class ModernTorqueApp(QMainWindow):
         self.extracted_data_label.setVisible(self.show_extracted_data)
         self.extracted_data_table.setVisible(self.show_extracted_data)
 
-    # Placeholder methods for adding, editing, and deleting torque entries
+    # ------------------- CRUD for the TorqueTable entries -------------------
     def add_entry(self):
         dialog = TorqueEntryDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1538,10 +1606,13 @@ class ModernTorqueApp(QMainWindow):
         self.load_torque_table_data()
 
     def init_report_templates_tab(self):
-        # This function should initialize the report templates tab.
-        # Implementation not provided here.
+        """
+        This function should initialize the report templates tab (if desired).
+        Implementation not provided here.
+        """
         pass
 
+# ------------------------------ MAIN ENTRY POINT ------------------------------
 if __name__ == "__main__":
     import sys
     from PyQt6.QtWidgets import QApplication
