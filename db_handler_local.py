@@ -49,6 +49,7 @@ def init_db():
     """)
     
     conn.commit()
+<<<<<<< HEAD
     
     # Insert default Laravel settings if they don't exist.
     if get_app_setting("laravel_app_url") is None:
@@ -56,6 +57,8 @@ def init_db():
     if get_app_setting("laravel_api_token") is None:
         set_app_setting("laravel_api_token", "")
     
+=======
+>>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     conn.close()
 
 def insert_default_torque_table_data():
