@@ -34,8 +34,7 @@ from db_handler_local import (
     init_db, insert_default_torque_table_data,
     get_torque_table, insert_raw_data, insert_summary,
     add_torque_entry, update_torque_entry, delete_torque_entry,
-    get_app_setting, set_app_setting, get_openai_models, add_openai_model,
-    update_openai_model, delete_openai_model
+    get_app_setting, set_app_setting
 )
 from serial_reader import read_from_serial, find_fits_in_selected_row
 from openai_handler import perform_extraction_from_image
@@ -490,7 +489,7 @@ class ModernTorqueApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-        # Import Customer Info
+        # Import Customer Info (unchanged)
         self.upload_info_btn = QToolButton()
         self.upload_info_btn.setText("Import Customer Info")
         self.upload_info_btn.setMinimumWidth(220)
@@ -1170,13 +1169,9 @@ class ModernTorqueApp(QMainWindow):
             self.api_key_edit.setText(self.openai_api_key)
         openai_layout.addRow("OpenAI API Key:", self.api_key_edit)
         self.model_combo = QComboBox()
-        self.load_model_combo()
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(self.model_combo)
-        self.manage_models_btn = QPushButton("Manage Models")
-        self.manage_models_btn.clicked.connect(self.open_model_manager)
-        model_layout.addWidget(self.manage_models_btn)
-        openai_layout.addRow("Model:", model_layout)
+        self.model_combo.addItems(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"])
+        self.model_combo.setCurrentText(self.openai_model)
+        openai_layout.addRow("Model:", self.model_combo)
         self.temp_spin = QDoubleSpinBox()
         self.temp_spin.setRange(0.0, 2.0)
         self.temp_spin.setSingleStep(0.1)
@@ -1289,7 +1284,7 @@ class ModernTorqueApp(QMainWindow):
         unit_synonyms_layout.addRow("FT/LB Synonyms:", self.ft_lb_synonyms_edit)
         self.in_lb_synonyms_edit = QLineEdit(get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs")
         unit_synonyms_layout.addRow("IN/LB Synonyms:", self.in_lb_synonyms_edit)
-        self.nm_synonyms_edit = QLineEdit(get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m.")
+        self.nm_synonyms_edit = QLineEdit(get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.n.m.")
         unit_synonyms_layout.addRow("NM Synonyms:", self.nm_synonyms_edit)
         save_unit_synonyms_btn = QPushButton("Save Unit Synonyms")
         save_unit_synonyms_btn.clicked.connect(self.save_unit_synonyms)
@@ -1442,6 +1437,7 @@ class ModernTorqueApp(QMainWindow):
         report_tab = QWidget()
         layout = QVBoxLayout(report_tab)
         layout.addWidget(QLabel("Report Templates Functionality:"))
+        # (Implement additional report template creation, preview, or editing functions here as needed.)
         layout.addWidget(QLabel("Use the settings under the Export and Template Settings pages to configure report templates."))
         report_tab.setLayout(layout)
         self.tab_widget.addTab(report_tab, "Report Templates")
@@ -1461,20 +1457,6 @@ class ModernTorqueApp(QMainWindow):
         set_app_setting("laravel_api_token", self.laravel_token_edit.text())
         QMessageBox.information(self, "Settings Saved", "API settings have been saved.")
 
-    # -------------------- New Methods for OpenAI Models Management --------------------
-    def load_model_combo(self):
-        models = get_openai_models()
-        self.model_combo.clear()
-        for model in models:
-            self.model_combo.addItem(model["model_name"], userData=model)
-        index = self.model_combo.findText(self.openai_model)
-        if index >= 0:
-            self.model_combo.setCurrentIndex(index)
-
-    def open_model_manager(self):
-        dialog = OpenAIModelManagerDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.load_model_combo()
     # ---------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -1486,109 +1468,3 @@ if __name__ == "__main__":
     window = ModernTorqueApp()
     window.show()
     sys.exit(app.exec())
-    
-# ---------------------- New Dialogs for Managing OpenAI Models ----------------------
-
-class ModelEditDialog(QDialog):
-    def __init__(self, parent=None, model_data=None):
-        super().__init__(parent)
-        self.setWindowTitle("Edit OpenAI Model" if model_data else "Add OpenAI Model")
-        self.model_data = model_data or {}
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QFormLayout(self)
-        self.name_edit = QLineEdit(self.model_data.get("model_name", ""))
-        self.desc_edit = QLineEdit(self.model_data.get("description", ""))
-        layout.addRow("Model Name:", self.name_edit)
-        layout.addRow("Description:", self.desc_edit)
-        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
-
-    def get_data(self):
-        return {
-            "model_name": self.name_edit.text().strip(),
-            "description": self.desc_edit.text().strip()
-        }
-
-class OpenAIModelManagerDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Manage OpenAI Models")
-        self.resize(400, 300)
-        self.init_ui()
-        self.load_models()
-
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["ID", "Model Name", "Description"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.table)
-        btn_layout = QHBoxLayout()
-        self.add_btn = QPushButton("Add")
-        self.edit_btn = QPushButton("Edit")
-        self.delete_btn = QPushButton("Delete")
-        self.close_btn = QPushButton("Close")
-        btn_layout.addWidget(self.add_btn)
-        btn_layout.addWidget(self.edit_btn)
-        btn_layout.addWidget(self.delete_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.close_btn)
-        layout.addLayout(btn_layout)
-
-        self.add_btn.clicked.connect(self.add_model)
-        self.edit_btn.clicked.connect(self.edit_model)
-        self.delete_btn.clicked.connect(self.delete_model)
-        self.close_btn.clicked.connect(self.accept)
-
-    def load_models(self):
-        models = get_openai_models()
-        self.table.setRowCount(len(models))
-        for row, model in enumerate(models):
-            id_item = QTableWidgetItem(str(model["id"]))
-            name_item = QTableWidgetItem(model["model_name"])
-            desc_item = QTableWidgetItem(model["description"])
-            self.table.setItem(row, 0, id_item)
-            self.table.setItem(row, 1, name_item)
-            self.table.setItem(row, 2, desc_item)
-
-    def add_model(self):
-        dialog = ModelEditDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.get_data()
-            if data["model_name"]:
-                add_openai_model(data["model_name"], data["description"])
-                self.load_models()
-
-    def edit_model(self):
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self, "Select Model", "Please select a model to edit.")
-            return
-        model_id = int(self.table.item(selected, 0).text())
-        current_data = {
-            "model_name": self.table.item(selected, 1).text(),
-            "description": self.table.item(selected, 2).text()
-        }
-        dialog = ModelEditDialog(self, current_data)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.get_data()
-            if data["model_name"]:
-                update_openai_model(model_id, data["model_name"], data["description"])
-                self.load_models()
-
-    def delete_model(self):
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self, "Select Model", "Please select a model to delete.")
-            return
-        model_id = int(self.table.item(selected, 0).text())
-        reply = QMessageBox.question(self, "Confirm Delete", "Are you sure you want to delete the selected model?",
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            delete_openai_model(model_id)
-            self.load_models()
