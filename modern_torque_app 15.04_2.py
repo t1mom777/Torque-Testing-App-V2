@@ -484,7 +484,7 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.clicked.connect(self.start_test)
         btn_layout.addWidget(self.start_btn)
 
-        # End Test button now only wipes test result columns
+        # Modified End Test button (updates calibration date and wipes data)
         self.stop_btn = QPushButton("End Test and Wipe Data")
         self.stop_btn.clicked.connect(self.stop_test)
         self.stop_btn.setEnabled(False)
@@ -511,7 +511,7 @@ class ModernTorqueApp(QMainWindow):
         action_link.triggered.connect(self.upload_customer_info_from_link)
         btn_layout.addWidget(self.upload_info_btn)
 
-        # Export/Print drop-down
+        # New Export/Print drop-down
         self.export_print_btn = QToolButton()
         self.export_print_btn.setText("Export / Print")
         self.export_print_btn.setMinimumWidth(220)
@@ -572,15 +572,8 @@ class ModernTorqueApp(QMainWindow):
             self.selected_row = None
             self.clear_torque_table()
 
-    # New helper to clear only test result columns (columns 2 to 6)
-    def clear_test_result_columns(self):
-        for r in range(self.torque_table.rowCount()):
-            for c in range(2, self.torque_table.columnCount()):
-                self.torque_table.setItem(r, c, QTableWidgetItem(""))
-
-    # Updated display_pre_test_rows: only clear test result columns and (re)populate columns 0 and 1.
     def display_pre_test_rows(self):
-        self.clear_test_result_columns()
+        self.clear_torque_table()
         if not self.selected_row:
             return
         try:
@@ -590,18 +583,12 @@ class ModernTorqueApp(QMainWindow):
         for i in range(3):
             allowance_key = self.selected_row.get(f"allowance{i+1}", "")
             applied_val = applied_arr[i] if i < len(applied_arr) else 0
-            # Create items and mark them as read-only so they remain untouchable.
-            applied_item = QTableWidgetItem(str(applied_val))
-            applied_item.setFlags(applied_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            allowance_item = QTableWidgetItem(allowance_key)
-            allowance_item.setFlags(allowance_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.torque_table.setItem(i, 0, applied_item)
-            self.torque_table.setItem(i, 1, allowance_item)
-            for c in range(2, self.torque_table.columnCount()):
+            self.torque_table.setItem(i, 0, QTableWidgetItem(str(applied_val)))
+            self.torque_table.setItem(i, 1, QTableWidgetItem(allowance_key))
+            for c in range(2, 7):
                 self.torque_table.setItem(i, c, QTableWidgetItem(""))
         self.results_by_range = {}
 
-    # Retain full clear_torque_table (complete clearing) in case it is needed elsewhere.
     def clear_torque_table(self):
         for r in range(self.torque_table.rowCount()):
             for c in range(self.torque_table.columnCount()):
@@ -629,9 +616,9 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.statusBar.showMessage("Test ended.")
-        # Instead of clearing the entire table, clear only the test result columns.
+        # Wipe test data and update calibration date
         self.results_by_range.clear()
-        self.clear_test_result_columns()
+        self.clear_torque_table()
         self.port_combo.clear()
         self.port_combo.addItems(self.get_serial_ports())
         self.calibration_date_edit.setDate(QDate.currentDate())
@@ -663,7 +650,7 @@ class ModernTorqueApp(QMainWindow):
             if allow_item:
                 allow_key = allow_item.text().strip()
                 test_vals = self.results_by_range.get(allow_key, [])
-                for col_idx in range(2, self.torque_table.columnCount()):
+                for col_idx in range(2, 7):
                     val_index = col_idx - 2
                     if val_index < len(test_vals):
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(str(test_vals[val_index])))
@@ -1255,6 +1242,7 @@ class ModernTorqueApp(QMainWindow):
         template_path_layout.addWidget(self.template_path_edit)
         template_path_layout.addWidget(template_path_browse_btn)
         export_layout.addRow("Summary Template File:", template_path_layout)
+        # Envelope settings
         self.envelope_excel_template_edit = QLineEdit(get_app_setting("envelope_excel_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.xlsx")
         export_layout.addRow("Envelope Excel Filename Template:", self.envelope_excel_template_edit)
         self.envelope_pdf_template_edit = QLineEdit(get_app_setting("envelope_pdf_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.pdf")
@@ -1294,7 +1282,7 @@ class ModernTorqueApp(QMainWindow):
         self.template_settings_page.setLayout(template_set_layout)
         self.settings_stacked.addWidget(self.template_settings_page)
 
-        # Unit Synonyms Page
+        # Unit Synonyms Settings Page
         self.unit_synonyms_page = QWidget()
         unit_synonyms_layout = QFormLayout(self.unit_synonyms_page)
         self.ft_lb_synonyms_edit = QLineEdit(get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs")
@@ -1498,8 +1486,9 @@ if __name__ == "__main__":
     window = ModernTorqueApp()
     window.show()
     sys.exit(app.exec())
-
+    
 # ---------------------- New Dialogs for Managing OpenAI Models ----------------------
+
 class ModelEditDialog(QDialog):
     def __init__(self, parent=None, model_data=None):
         super().__init__(parent)
