@@ -16,12 +16,9 @@ try:
 except ImportError:
     win32com = None
 
-<<<<<<< HEAD
 # NEW: Import printing support from PyQt6
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
-=======
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QLabel,
     QComboBox, QPushButton, QHeaderView,
@@ -55,11 +52,7 @@ def convert_excel_to_pdf(excel_path: str, pdf_path: str):
 
     excel = win32com.client.Dispatch("Excel.Application")
     excel.Visible = False
-<<<<<<< HEAD
     excel.DisplayAlerts = False
-=======
-    excel.DisplayAlerts = False  # Suppress any alerts/popups
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
     try:
         wb = excel.Workbooks.Open(os.path.abspath(excel_path), ReadOnly=1)
@@ -106,11 +99,7 @@ class SerialReaderWorker(QThread):
 def calc_applied_torques(max_torque: float) -> list[float]:
     """
     Given a maximum torque, calculates typical applied torques at ~92%, ~58%, and ~33%.
-<<<<<<< HEAD
     Rounds each to the nearest 10.
-=======
-    Rounds each to the nearest 10 for convenience.
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     """
     factors = [0.916, 0.583, 0.333]
     results = []
@@ -122,31 +111,16 @@ def calc_applied_torques(max_torque: float) -> list[float]:
 
 def calc_allowance_range(applied_val: float) -> str:
     """
-<<<<<<< HEAD
     Returns a min-max allowance range string with a 4-6% tolerance.
     """
     tolerance = 0.06 if applied_val < 10 else 0.04
-=======
-    Creates a min-max allowance range string with a 4-6% tolerance
-    depending on how large 'applied_val' is.
-    """
-    if applied_val < 10:
-        tolerance = 0.06
-    else:
-        tolerance = 0.04
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     low = applied_val * (1 - tolerance)
     high = applied_val * (1 + tolerance)
     return f"{round(low,1)} - {round(high,1)}"
 
 def generate_filename(template: str, variables: dict) -> str:
     """
-<<<<<<< HEAD
     Replaces placeholders (e.g. {{CustomerCompany}}) with actual values.
-=======
-    Replaces placeholders in 'template' (like {{CustomerCompany}})
-    with actual values from 'variables' dict.
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     """
     filename = template
     for key, value in variables.items():
@@ -246,19 +220,15 @@ class ModernTorqueApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Torque Testing Application")
         self.setGeometry(100, 100, 950, 650)
-<<<<<<< HEAD
         # Variables to store last exported file paths for printing
         self.last_exported_summary_path = None
         self.last_exported_envelope_path = None
-=======
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
         self.results_by_range = {}
         self.customer_info = {}
         self.serial_worker = None
         self.selected_row = None
 
-<<<<<<< HEAD
         # Load OpenAI settings
         self.openai_api_key = get_app_setting("openai_api_key")
         self.openai_model = get_app_setting("openai_model") or "gpt-4-turbo"
@@ -280,58 +250,6 @@ class ModernTorqueApp(QMainWindow):
             self.openai_frequency_penalty = 0.0
 
         self.show_extracted_data = (get_app_setting("show_extracted_data") or "false").lower() == "true"
-=======
-        # ------------------ LOAD OpenAI SETTINGS FROM DB ------------------
-        self.openai_api_key = None
-        self.openai_model = "gpt-4-turbo"
-        self.openai_temperature = 0.7
-        self.openai_top_p = 1.0
-        self.openai_presence_penalty = 0.0
-        self.openai_frequency_penalty = 0.0
-
-        saved_key = get_app_setting("openai_api_key")
-        if saved_key:
-            self.openai_api_key = saved_key
-
-        saved_model = get_app_setting("openai_model")
-        if saved_model:
-            self.openai_model = saved_model
-
-        saved_temperature = get_app_setting("openai_temperature")
-        if saved_temperature:
-            try:
-                self.openai_temperature = float(saved_temperature)
-            except ValueError:
-                pass
-
-        saved_top_p = get_app_setting("openai_top_p")
-        if saved_top_p:
-            try:
-                self.openai_top_p = float(saved_top_p)
-            except ValueError:
-                pass
-
-        saved_presence_penalty = get_app_setting("openai_presence_penalty")
-        if saved_presence_penalty:
-            try:
-                self.openai_presence_penalty = float(saved_presence_penalty)
-            except ValueError:
-                pass
-
-        saved_frequency_penalty = get_app_setting("openai_frequency_penalty")
-        if saved_frequency_penalty:
-            try:
-                self.openai_frequency_penalty = float(saved_frequency_penalty)
-            except ValueError:
-                pass
-
-        # Load setting for showing extracted data (default hidden)
-        saved_show_extracted = get_app_setting("show_extracted_data")
-        if saved_show_extracted:
-            self.show_extracted_data = (saved_show_extracted.lower() == "true")
-        else:
-            self.show_extracted_data = False
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
         self.setStyleSheet(self.load_stylesheet())
         self.init_ui()
@@ -472,10 +390,7 @@ class ModernTorqueApp(QMainWindow):
         self.init_testing_tab()
         self.init_settings_tab()
         self.init_report_templates_tab()
-<<<<<<< HEAD
         self.load_torque_table_data()
-=======
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
     # ------------------------------ TESTING TAB ------------------------------
     def init_testing_tab(self):
@@ -495,10 +410,6 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.serial_number_edit, row, 3)
 
         row += 1
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         info_grid.addWidget(QLabel("Model:"), row, 0)
         self.model_edit = QLineEdit()
         info_grid.addWidget(self.model_edit, row, 1)
@@ -510,10 +421,6 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.calibration_date_edit, row, 3)
 
         row += 1
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         info_grid.addWidget(QLabel("Max Torque:"), row, 0)
         self.max_torque_combo = QComboBox()
         info_grid.addWidget(self.max_torque_combo, row, 1)
@@ -526,10 +433,6 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.calibration_due_edit, row, 3)
 
         row += 1
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         info_grid.addWidget(QLabel("Unit #:"), row, 0)
         self.unit_number_edit = QLineEdit()
         info_grid.addWidget(self.unit_number_edit, row, 1)
@@ -539,10 +442,6 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.customer_edit, row, 3)
 
         row += 1
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         info_grid.addWidget(QLabel("Phone Number:"), row, 0)
         self.phone_edit = QLineEdit()
         info_grid.addWidget(self.phone_edit, row, 1)
@@ -552,31 +451,19 @@ class ModernTorqueApp(QMainWindow):
         info_grid.addWidget(self.address_edit, row, 3)
 
         row += 1
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         info_grid.addWidget(QLabel("Serial Port:"), row, 0)
         self.port_combo = QComboBox()
         self.port_combo.addItems(self.get_serial_ports())
         info_grid.addWidget(self.port_combo, row, 1)
 
-<<<<<<< HEAD
         # Live Torque label
-=======
-        # Add live torque label in the same row
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.live_torque_label = QLabel("Live Torque: --")
         self.live_torque_label.setStyleSheet("font-size: 48px; padding: 5px;")
         info_grid.addWidget(self.live_torque_label, row, 3)
 
         main_layout.addLayout(info_grid)
 
-<<<<<<< HEAD
         # Test Results Table
-=======
-        # Create Test Results Table
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.torque_table = QTableWidget()
         self.torque_table.setColumnCount(7)
         self.torque_table.setHorizontalHeaderLabels([
@@ -596,54 +483,33 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.clicked.connect(self.start_test)
         btn_layout.addWidget(self.start_btn)
 
-<<<<<<< HEAD
         # Modified End Test button (updates calibration date and wipes data)
         self.stop_btn = QPushButton("End Test and Wipe Data")
-=======
-        self.stop_btn = QPushButton("End Test")
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.stop_btn.clicked.connect(self.stop_test)
         self.stop_btn.setEnabled(False)
         btn_layout.addWidget(self.stop_btn)
 
-<<<<<<< HEAD
         # Import Customer Info (unchanged)
-=======
-        # Updated Upload Customer Info button with an extra menu item for API import
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.upload_info_btn = QToolButton()
         self.upload_info_btn.setText("Import Customer Info")
         self.upload_info_btn.setMinimumWidth(220)
         self.upload_info_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-<<<<<<< HEAD
         info_menu = QMenu()
-=======
-        menu = QMenu()
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         action_upload_file = QAction("Upload image from computer", self)
         action_clipboard = QAction("Upload image/screenshot from clipboard", self)
         action_webcam = QAction("Take image from web camera", self)
         action_link = QAction("Import info from link", self)
-<<<<<<< HEAD
         info_menu.addAction(action_upload_file)
         info_menu.addAction(action_clipboard)
         info_menu.addAction(action_webcam)
         info_menu.addAction(action_link)
         self.upload_info_btn.setMenu(info_menu)
-=======
-        menu.addAction(action_upload_file)
-        menu.addAction(action_clipboard)
-        menu.addAction(action_webcam)
-        menu.addAction(action_link)
-        self.upload_info_btn.setMenu(menu)
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         action_upload_file.triggered.connect(self.upload_customer_info_from_file)
         action_clipboard.triggered.connect(self.upload_customer_info_from_clipboard)
         action_webcam.triggered.connect(self.upload_customer_info_from_webcam)
         action_link.triggered.connect(self.upload_customer_info_from_link)
         btn_layout.addWidget(self.upload_info_btn)
 
-<<<<<<< HEAD
         # New Export/Print drop-down
         self.export_print_btn = QToolButton()
         self.export_print_btn.setText("Export / Print")
@@ -664,16 +530,6 @@ class ModernTorqueApp(QMainWindow):
         export_menu.addAction(print_envelope_action)
         self.export_print_btn.setMenu(export_menu)
         btn_layout.addWidget(self.export_print_btn)
-=======
-        self.export_summary_btn = QPushButton("Export Summary")
-        self.export_summary_btn.clicked.connect(self.export_summary)
-        btn_layout.addWidget(self.export_summary_btn)
-
-        self.export_envelope_btn = QPushButton("Export Envelope")
-        self.export_envelope_btn.clicked.connect(self.export_envelope)
-        btn_layout.addWidget(self.export_envelope_btn)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         main_layout.addLayout(btn_layout)
 
         # Extracted Data Section
@@ -685,10 +541,6 @@ class ModernTorqueApp(QMainWindow):
         self.extracted_data_table.verticalHeader().setVisible(False)
         self.extracted_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         main_layout.addWidget(self.extracted_data_table)
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.extracted_data_label.setVisible(self.show_extracted_data)
         self.extracted_data_table.setVisible(self.show_extracted_data)
 
@@ -763,7 +615,6 @@ class ModernTorqueApp(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.statusBar.showMessage("Test ended.")
-<<<<<<< HEAD
         # Wipe test data and update calibration date
         self.results_by_range.clear()
         self.clear_torque_table()
@@ -772,13 +623,6 @@ class ModernTorqueApp(QMainWindow):
         self.calibration_date_edit.setDate(QDate.currentDate())
         QMessageBox.information(self, "Test Completed", "Test ended and data wiped.")
         print("[DEBUG] Test stopped. Results wiped.")
-=======
-        self.display_pre_test_rows()
-        self.port_combo.clear()
-        self.port_combo.addItems(self.get_serial_ports())
-        QMessageBox.information(self, "Test Completed", "Test ended.")
-        print("[DEBUG] Test stopped. Results by range =>", self.results_by_range)
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
     def process_reading(self, target_torque, fits):
         self.live_torque_label.setText(f"Live Torque: {target_torque}")
@@ -812,11 +656,7 @@ class ModernTorqueApp(QMainWindow):
                     else:
                         self.torque_table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
-<<<<<<< HEAD
     # -------------------- CUSTOMER INFO IMPORTING --------------------
-=======
-    # -------------------- IMPORTING CUSTOMER INFO (API / OCR) --------------------
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def upload_customer_info_from_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Image", "",
@@ -873,15 +713,9 @@ class ModernTorqueApp(QMainWindow):
                 return
             cv2.imshow("Webcam - Press Space to Capture", frame)
             key = cv2.waitKey(1) & 0xFF
-<<<<<<< HEAD
             if key == 32:
                 break
             elif key == 27:
-=======
-            if key == 32:  # Space to capture
-                break
-            elif key == 27:  # Esc to cancel
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
                 cap.release()
                 cv2.destroyAllWindows()
                 return
@@ -900,24 +734,11 @@ class ModernTorqueApp(QMainWindow):
         self.update_extracted_data_table(extracted_data)
 
     def upload_customer_info_from_link(self):
-<<<<<<< HEAD
-=======
-        """
-        Imports customer info from a numeric ID in a link (in the clipboard),
-        calls the Laravel API, and sets the relevant UI fields.
-        Now also attempts to auto-select the correct max torque in the dropdown
-        if found in 'additional_info_fields'.
-        """
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         clipboard = QApplication.clipboard()
         text = clipboard.text().strip()
         if not text:
             QMessageBox.warning(self, "Clipboard Empty", "No text found in clipboard.")
             return
-<<<<<<< HEAD
-=======
-        # Extract the last numeric sequence from the link
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         match = re.search(r'(\d+)(?!.*\d)', text)
         if not match:
             QMessageBox.warning(self, "Invalid Link", "No numeric ID found in the clipboard text.")
@@ -931,11 +752,6 @@ class ModernTorqueApp(QMainWindow):
         if not laravel_url:
             QMessageBox.critical(self, "Error", "Laravel app URL not set in settings.")
             return
-<<<<<<< HEAD
-=======
-
-        # Call the API to get line-item details
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         line_item_response = self.get_line_item_from_api(line_item_id, token, laravel_url)
         if not line_item_response:
             return
@@ -943,20 +759,11 @@ class ModernTorqueApp(QMainWindow):
         if not line_item_data:
             QMessageBox.warning(self, "API Error", "No 'data' key found in line item response.")
             return
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         company_asset = line_item_data.get("company_asset", {})
         self.unit_number_edit.setText(company_asset.get("unit_number", ""))
         self.manufacturer_edit.setText(company_asset.get("make", ""))
         self.model_edit.setText(company_asset.get("model", ""))
         self.serial_number_edit.setText(company_asset.get("serial_number", ""))
-<<<<<<< HEAD
-=======
-
-        # If there's a known max_torque in the additional_info_fields, auto-select it
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         asset_info = company_asset.get("additional_info_fields", {})
         max_torque_str = str(asset_info.get("max_torque", "")).strip()
         torque_unit_str = str(asset_info.get("torque_unit", "")).strip()
@@ -966,11 +773,6 @@ class ModernTorqueApp(QMainWindow):
                 self.auto_select_max_torque(extracted_val, torque_unit_str)
             except ValueError:
                 pass
-<<<<<<< HEAD
-=======
-
-        # Also fetch company info if there's a company_id
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         company_id = company_asset.get("company_id")
         if company_id:
             company_response = self.get_company_info_from_api(company_id, token, laravel_url)
@@ -978,15 +780,8 @@ class ModernTorqueApp(QMainWindow):
                 company_data = company_response.get("data", company_response)
                 self.customer_edit.setText(company_data.get("name", ""))
                 self.phone_edit.setText(company_data.get("phone", ""))
-<<<<<<< HEAD
         QMessageBox.information(self, "Success", "Customer info imported from API.")
 
-=======
-
-        QMessageBox.information(self, "Success", "Customer info imported from API.")
-
-    # --------------------- LARAVEL API HELPER CALLS ---------------------
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def get_line_item_from_api(self, line_item_id, token, base_url):
         url = f"{base_url}/api/line-items/{line_item_id}"
         headers = {
@@ -998,10 +793,6 @@ class ModernTorqueApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "API Error", f"Error during line-item request: {e}")
             return None
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         if response.status_code == 200:
             try:
                 return response.json()
@@ -1023,10 +814,6 @@ class ModernTorqueApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "API Error", f"Error during company request: {e}")
             return None
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         if response.status_code == 200:
             try:
                 return response.json()
@@ -1037,27 +824,10 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.warning(self, "API Error", f"Company request failed: {response.status_code} {response.text}")
             return None
 
-<<<<<<< HEAD
     def extract_torque_data(self, image_path: str) -> dict:
         return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
 
     def update_extracted_data_table(self, data: dict):
-=======
-    # ------------------------ OCR Extraction ------------------------
-    def extract_torque_data(self, image_path: str) -> dict:
-        """
-        Perform OCR extraction using OpenAI to get fields:
-        manufacturer, model, unit, serial, customer, phone, address,
-        max_torque, torque_unit
-        """
-        return perform_extraction_from_image(image_path, self.openai_api_key, self.openai_model)
-
-    def update_extracted_data_table(self, data: dict):
-        """
-        After image-based OCR extraction, fill in UI fields
-        and auto-select the max torque in the combo if possible.
-        """
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.manufacturer_edit.setText(data.get("manufacturer", ""))
         self.model_edit.setText(data.get("model", ""))
         self.unit_number_edit.setText(data.get("unit", ""))
@@ -1065,15 +835,8 @@ class ModernTorqueApp(QMainWindow):
         self.customer_edit.setText(data.get("customer", ""))
         self.phone_edit.setText(data.get("phone", ""))
         self.address_edit.setText(data.get("address", ""))
-<<<<<<< HEAD
         max_torque_raw = data.get("max_torque", "")
         torque_unit_str = str(data.get("torque_unit", "")).strip()
-=======
-
-        max_torque_raw = data.get("max_torque", "")
-        torque_unit_str = str(data.get("torque_unit", "")).strip()
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         max_torque_str = str(max_torque_raw).strip()
         if max_torque_str:
             try:
@@ -1081,10 +844,6 @@ class ModernTorqueApp(QMainWindow):
                 self.auto_select_max_torque(extracted_val, torque_unit_str)
             except ValueError:
                 pass
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         fields = [
             ("Manufacturer", data.get("manufacturer", "")),
             ("Model", data.get("model", "")),
@@ -1102,7 +861,6 @@ class ModernTorqueApp(QMainWindow):
             self.extracted_data_table.setItem(i, 1, QTableWidgetItem(value))
 
     def auto_select_max_torque(self, extracted_val: float, extracted_unit: str):
-<<<<<<< HEAD
         ft_lb_synonyms_str = get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs"
         in_lb_synonyms_str = get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs"
         nm_synonyms_str = get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m."
@@ -1113,28 +871,6 @@ class ModernTorqueApp(QMainWindow):
             return val * 1.35582
         def inlb_to_nm(val):
             return val * 0.113
-=======
-        """
-        Looks through the existing TorqueTable entries to see if any
-        are "close" to the extracted_val (converted to Nm if needed).
-        If so, sets that entry as selected in the max_torque_combo.
-        """
-        # Retrieve synonyms from the DB settings (or use defaults)
-        ft_lb_synonyms_str = get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs"
-        in_lb_synonyms_str = get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs"
-        nm_synonyms_str = get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m."
-
-        FT_LB_SYNONYMS = set(s.strip() for s in ft_lb_synonyms_str.split(",") if s.strip())
-        IN_LB_SYNONYMS = set(s.strip() for s in in_lb_synonyms_str.split(",") if s.strip())
-        NM_SYNONYMS = set(s.strip() for s in nm_synonyms_str.split(",") if s.strip())
-
-        def ftlb_to_nm(val):
-            return val * 1.35582
-
-        def inlb_to_nm(val):
-            return val * 0.113
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         extracted_unit_lower = extracted_unit.lower().strip()
         if extracted_unit_lower in FT_LB_SYNONYMS:
             extracted_val_nm = ftlb_to_nm(extracted_val)
@@ -1143,19 +879,9 @@ class ModernTorqueApp(QMainWindow):
         elif extracted_unit_lower in NM_SYNONYMS:
             extracted_val_nm = extracted_val
         else:
-<<<<<<< HEAD
             extracted_val_nm = extracted_val
         table_data = get_torque_table()
         tolerance_base = max(extracted_val_nm * 0.10, 2.0)
-=======
-            # If unknown, assume user typed in Nm or the number is already correct
-            extracted_val_nm = extracted_val
-
-        table_data = get_torque_table()
-        # Tweak tolerance: now using 10% or at least 2.0 Nm
-        tolerance_base = max(extracted_val_nm * 0.10, 2.0)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         for i, row in enumerate(table_data):
             db_torque = row["max_torque"]
             db_unit_lower = row["unit"].lower().strip()
@@ -1167,10 +893,6 @@ class ModernTorqueApp(QMainWindow):
                 db_torque_nm = db_torque
             else:
                 db_torque_nm = db_torque
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
             if abs(db_torque_nm - extracted_val_nm) <= tolerance_base:
                 self.max_torque_combo.setCurrentIndex(i)
                 self.selected_row = row
@@ -1195,7 +917,6 @@ class ModernTorqueApp(QMainWindow):
             "Calibration Date": self.calibration_date_edit.date().toString(Qt.DateFormat.ISODate),
             "Calibration Due": self.calibration_due_edit.date().toString(Qt.DateFormat.ISODate),
             "Unit Number": self.unit_number_edit.text(),
-<<<<<<< HEAD
             "CustomerCompany": self.customer_edit.text(),
             "PhoneNumber": self.phone_edit.text(),
             "Address": self.address_edit.text(),
@@ -1204,26 +925,10 @@ class ModernTorqueApp(QMainWindow):
         if not summary_data:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
             return
-=======
-            "Customer/Company": self.customer_edit.text(),
-            "Phone Number": self.phone_edit.text(),
-            "Address": self.address_edit.text(),
-            "MaxTorque": f"{self.selected_row.get('max_torque', '')} {self.selected_row.get('unit', '')}" if self.selected_row else ""
-        }
-
-        if not summary_data:
-            QMessageBox.warning(self, "Export Warning", "No table data to export.")
-            return
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         excel_save_dir = get_app_setting("excel_save_dir") or os.getcwd()
         pdf_save_dir = get_app_setting("pdf_save_dir") or os.getcwd()
         excel_filename_template = get_app_setting("excel_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
         pdf_filename_template = get_app_setting("pdf_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         filename_variables = {
             "Manufacturer": extra_info.get("Manufacturer", ""),
             "SerialNumber": extra_info.get("Serial Number", ""),
@@ -1231,20 +936,11 @@ class ModernTorqueApp(QMainWindow):
             "CalibrationDate": extra_info.get("Calibration Date", ""),
             "CalibrationDue": extra_info.get("Calibration Due", ""),
             "UnitNumber": extra_info.get("Unit Number", ""),
-<<<<<<< HEAD
             "CustomerCompany": extra_info.get("CustomerCompany", ""),
             "PhoneNumber": extra_info.get("PhoneNumber", ""),
             "Address": extra_info.get("Address", ""),
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
-=======
-            "CustomerCompany": extra_info.get("Customer/Company", ""),
-            "PhoneNumber": extra_info.get("Phone Number", ""),
-            "Address": extra_info.get("Address", ""),
-            "MaxTorque": extra_info.get("MaxTorque", "")
-        }
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         template_path = get_app_setting("summary_template_path") or "summary_template.xlsx"
         excel_path = None
         if self.excel_checkbox.isChecked():
@@ -1261,10 +957,6 @@ class ModernTorqueApp(QMainWindow):
                 return
         else:
             excel_path = None
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         pdf_path = None
         if self.pdf_checkbox.isChecked():
             if not excel_path:
@@ -1277,28 +969,17 @@ class ModernTorqueApp(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Error exporting PDF summary:\n{e}")
                 return
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         msg = "Summary exported to:\n"
         if excel_path:
             msg += f"Excel: {excel_path}\n"
         if pdf_path:
             msg += f"PDF: {pdf_path}"
         QMessageBox.information(self, "Export Summary", msg)
-<<<<<<< HEAD
         self.last_exported_summary_path = excel_path if excel_path else pdf_path
-=======
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
     def export_summary_with_template(self, template_path, extra_info, summary_data, output_path):
         wb = load_workbook(template_path)
         ws = wb.active
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         variables = {
             "Manufacturer": extra_info.get("Manufacturer", ""),
             "SerialNumber": extra_info.get("Serial Number", ""),
@@ -1306,21 +987,11 @@ class ModernTorqueApp(QMainWindow):
             "CalibrationDate": extra_info.get("Calibration Date", ""),
             "CalibrationDue": extra_info.get("Calibration Due", ""),
             "UnitNumber": extra_info.get("Unit Number", ""),
-<<<<<<< HEAD
             "CustomerCompany": extra_info.get("CustomerCompany", ""),
             "PhoneNumber": extra_info.get("PhoneNumber", ""),
             "Address": extra_info.get("Address", ""),
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
-=======
-            "CustomerCompany": extra_info.get("Customer/Company", ""),
-            "PhoneNumber": extra_info.get("Phone Number", ""),
-            "Address": extra_info.get("Address", ""),
-            "MaxTorque": extra_info.get("MaxTorque", "")
-        }
-
-        # Replace placeholders in the template
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -1328,10 +999,6 @@ class ModernTorqueApp(QMainWindow):
                         placeholder = "{{" + key + "}}"
                         if placeholder in cell.value:
                             cell.value = cell.value.replace(placeholder, str(val))
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         summary_variables = {}
         for idx, row_data in enumerate(summary_data):
             allowance_number = idx + 1
@@ -1339,10 +1006,6 @@ class ModernTorqueApp(QMainWindow):
             summary_variables[f"MinMaxAllowance{allowance_number}"] = row_data.get("Min - Max Allowance", "")
             for test in range(1, 6):
                 summary_variables[f"Test{test}_Allowance{allowance_number}"] = row_data.get(f"Test {test}", "")
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value and isinstance(cell.value, str):
@@ -1350,10 +1013,6 @@ class ModernTorqueApp(QMainWindow):
                         placeholder = "{{" + key + "}}"
                         if placeholder in cell.value:
                             cell.value = cell.value.replace(placeholder, str(val))
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         wb.save(output_path)
 
     # ----------------------------- EXPORTING ENVELOPE -----------------------------
@@ -1374,7 +1033,6 @@ class ModernTorqueApp(QMainWindow):
             "Calibration Date": self.calibration_date_edit.date().toString(Qt.DateFormat.ISODate),
             "Calibration Due": self.calibration_due_edit.date().toString(Qt.DateFormat.ISODate),
             "Unit Number": self.unit_number_edit.text(),
-<<<<<<< HEAD
             "CustomerCompany": self.customer_edit.text(),
             "PhoneNumber": self.phone_edit.text(),
             "Address": self.address_edit.text(),
@@ -1383,26 +1041,10 @@ class ModernTorqueApp(QMainWindow):
         if not summary_data:
             QMessageBox.warning(self, "Export Warning", "No table data to export.")
             return
-=======
-            "Customer/Company": self.customer_edit.text(),
-            "Phone Number": self.phone_edit.text(),
-            "Address": self.address_edit.text(),
-            "MaxTorque": f"{self.selected_row.get('max_torque', '')} {self.selected_row.get('unit', '')}" if self.selected_row else ""
-        }
-
-        if not summary_data:
-            QMessageBox.warning(self, "Export Warning", "No table data to export.")
-            return
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         excel_save_dir = get_app_setting("excel_save_dir") or os.getcwd()
         pdf_save_dir = get_app_setting("pdf_save_dir") or os.getcwd()
         envelope_excel_filename_template = get_app_setting("envelope_excel_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
         envelope_pdf_filename_template = get_app_setting("envelope_pdf_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         filename_variables = {
             "Manufacturer": extra_info.get("Manufacturer", ""),
             "SerialNumber": extra_info.get("Serial Number", ""),
@@ -1410,20 +1052,11 @@ class ModernTorqueApp(QMainWindow):
             "CalibrationDate": extra_info.get("Calibration Date", ""),
             "CalibrationDue": extra_info.get("Calibration Due", ""),
             "UnitNumber": extra_info.get("Unit Number", ""),
-<<<<<<< HEAD
             "CustomerCompany": extra_info.get("CustomerCompany", ""),
             "PhoneNumber": extra_info.get("PhoneNumber", ""),
             "Address": extra_info.get("Address", ""),
             "MaxTorque": extra_info.get("MaxTorque", "")
         }
-=======
-            "CustomerCompany": extra_info.get("Customer/Company", ""),
-            "PhoneNumber": extra_info.get("Phone Number", ""),
-            "Address": extra_info.get("Address", ""),
-            "MaxTorque": extra_info.get("MaxTorque", "")
-        }
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         envelope_template_path = get_app_setting("envelope_template_path") or "envelope_template.xlsx"
         envelope_excel_path = None
         if self.envelope_excel_checkbox.isChecked():
@@ -1440,10 +1073,6 @@ class ModernTorqueApp(QMainWindow):
                 return
         else:
             envelope_excel_path = None
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         envelope_pdf_path = None
         if self.envelope_pdf_checkbox.isChecked():
             if not envelope_excel_path:
@@ -1456,18 +1085,12 @@ class ModernTorqueApp(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", f"Error exporting Envelope PDF summary:\n{e}")
                 return
-<<<<<<< HEAD
         msg = "Envelope exported to:\n"
-=======
-
-        msg = "Envelope export exported to:\n"
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         if envelope_excel_path:
             msg += f"Excel: {envelope_excel_path}\n"
         if envelope_pdf_path:
             msg += f"PDF: {envelope_pdf_path}"
         QMessageBox.information(self, "Export Envelope", msg)
-<<<<<<< HEAD
         self.last_exported_envelope_path = envelope_excel_path if envelope_excel_path else envelope_pdf_path
 
     # --------------------------- PRINTING FUNCTIONS ---------------------------
@@ -1490,8 +1113,6 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.information(self, "Print Envelope", f"Envelope sent to printer:\n{self.last_exported_envelope_path}")
         except Exception as e:
             QMessageBox.critical(self, "Print Error", f"Error printing envelope: {e}")
-=======
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
 
     # ------------------------------ SETTINGS TAB ------------------------------
     def init_settings_tab(self):
@@ -1511,7 +1132,6 @@ class ModernTorqueApp(QMainWindow):
         self.settings_stacked = QStackedWidget()
         layout.addWidget(self.settings_stacked)
 
-<<<<<<< HEAD
         # Data Management Page
         self.data_management_page = QWidget()
         dm_layout = QVBoxLayout(self.data_management_page)
@@ -1520,20 +1140,6 @@ class ModernTorqueApp(QMainWindow):
         self.torque_table_widget.setHorizontalHeaderLabels(["Max Torque", "Unit", "Type", "Applied Torque"])
         self.torque_table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         dm_layout.addWidget(self.torque_table_widget)
-=======
-        # ---------------- Data Management Page ----------------
-        self.data_management_page = QWidget()
-        dm_layout = QVBoxLayout(self.data_management_page)
-
-        self.torque_table_widget = QTableWidget()
-        self.torque_table_widget.setColumnCount(4)
-        self.torque_table_widget.setHorizontalHeaderLabels([
-            "Max Torque", "Unit", "Type", "Applied Torque"
-        ])
-        self.torque_table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        dm_layout.addWidget(self.torque_table_widget)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         btn_layout = QHBoxLayout()
         self.add_btn = QPushButton("Add Entry")
         self.add_btn.clicked.connect(self.add_entry)
@@ -1548,85 +1154,44 @@ class ModernTorqueApp(QMainWindow):
         btn_layout.addWidget(self.delete_btn)
         btn_layout.addWidget(self.refresh_btn)
         dm_layout.addLayout(btn_layout)
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.extracted_data_checkbox = QCheckBox("Show Extracted Data in Testing Tab")
         self.extracted_data_checkbox.setChecked(self.show_extracted_data)
         self.extracted_data_checkbox.stateChanged.connect(self.toggle_extracted_data)
         dm_layout.addWidget(self.extracted_data_checkbox)
-<<<<<<< HEAD
         self.data_management_page.setLayout(dm_layout)
         self.settings_stacked.addWidget(self.data_management_page)
 
         # OpenAI Settings Page
         self.openai_settings_page = QWidget()
         openai_layout = QFormLayout(self.openai_settings_page)
-=======
-
-        self.data_management_page.setLayout(dm_layout)
-        self.settings_stacked.addWidget(self.data_management_page)
-
-        # ---------------- OpenAI Settings Page ----------------
-        self.openai_settings_page = QWidget()
-        openai_layout = QFormLayout(self.openai_settings_page)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.api_key_edit = QLineEdit()
         if self.openai_api_key:
             self.api_key_edit.setText(self.openai_api_key)
         openai_layout.addRow("OpenAI API Key:", self.api_key_edit)
-<<<<<<< HEAD
         self.model_combo = QComboBox()
         self.model_combo.addItems(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"])
         self.model_combo.setCurrentText(self.openai_model)
         openai_layout.addRow("Model:", self.model_combo)
-=======
-
-        self.model_combo = QComboBox()
-        self.model_combo.addItems([
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-turbo"
-        ])
-        self.model_combo.setCurrentText(self.openai_model)
-        openai_layout.addRow("Model:", self.model_combo)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.temp_spin = QDoubleSpinBox()
         self.temp_spin.setRange(0.0, 2.0)
         self.temp_spin.setSingleStep(0.1)
         self.temp_spin.setValue(self.openai_temperature)
         openai_layout.addRow("Temperature:", self.temp_spin)
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.top_p_spin = QDoubleSpinBox()
         self.top_p_spin.setRange(0.0, 1.0)
         self.top_p_spin.setSingleStep(0.1)
         self.top_p_spin.setValue(self.openai_top_p)
         openai_layout.addRow("Top P:", self.top_p_spin)
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.presence_spin = QDoubleSpinBox()
         self.presence_spin.setRange(0.0, 2.0)
         self.presence_spin.setSingleStep(0.1)
         self.presence_spin.setValue(self.openai_presence_penalty)
         openai_layout.addRow("Presence Penalty:", self.presence_spin)
-<<<<<<< HEAD
-=======
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         self.freq_spin = QDoubleSpinBox()
         self.freq_spin.setRange(0.0, 2.0)
         self.freq_spin.setSingleStep(0.1)
         self.freq_spin.setValue(self.openai_frequency_penalty)
         openai_layout.addRow("Frequency Penalty:", self.freq_spin)
-<<<<<<< HEAD
         save_key_btn = QPushButton("Save OpenAI Settings")
         save_key_btn.clicked.connect(self.save_openai_settings)
         openai_layout.addWidget(save_key_btn)
@@ -1705,150 +1270,6 @@ class ModernTorqueApp(QMainWindow):
         self.template_settings_page = QWidget()
         template_set_layout = QFormLayout(self.template_settings_page)
         self.base_template_path_edit = QLineEdit(get_app_setting("base_template_path") or os.getcwd())
-=======
-
-        save_key_btn = QPushButton("Save OpenAI Settings")
-        save_key_btn.clicked.connect(self.save_openai_settings)
-        openai_layout.addWidget(save_key_btn)
-
-        self.settings_stacked.addWidget(self.openai_settings_page)
-
-        # ---------------- Export Settings Page ----------------
-        self.export_settings_page = QWidget()
-        export_layout = QFormLayout(self.export_settings_page)
-
-        self.excel_checkbox = QCheckBox("Enable Excel Export")
-        self.excel_checkbox.setChecked(True)
-        export_layout.addRow("", self.excel_checkbox)
-
-        self.pdf_checkbox = QCheckBox("Enable PDF Export")
-        self.pdf_checkbox.setChecked(True)
-        export_layout.addRow("", self.pdf_checkbox)
-
-        self.filename_vars = [
-            ("Manufacturer", "{{Manufacturer}}"),
-            ("Serial Number", "{{SerialNumber}}"),
-            ("Model", "{{Model}}"),
-            ("Calibration Date", "{{CalibrationDate}}"),
-            ("Max Torque", "{{MaxTorque}}"),
-            ("Calibration Due", "{{CalibrationDue}}"),
-            ("Unit Number", "{{UnitNumber}}"),
-            ("Customer/Company", "{{CustomerCompany}}"),
-            ("Phone Number", "{{PhoneNumber}}"),
-            ("Address", "{{Address}}"),
-        ]
-
-        self.excel_dir_edit = QLineEdit()
-        self.excel_dir_edit.setText(get_app_setting("excel_save_dir") or os.getcwd())
-        excel_browse_btn = QPushButton("Browse")
-        excel_browse_btn.clicked.connect(self.browse_excel_dir)
-        hbox_excel = QHBoxLayout()
-        hbox_excel.addWidget(self.excel_dir_edit)
-        hbox_excel.addWidget(excel_browse_btn)
-        export_layout.addRow("Excel Save Directory:", hbox_excel)
-
-        self.pdf_dir_edit = QLineEdit()
-        self.pdf_dir_edit.setText(get_app_setting("pdf_save_dir") or os.getcwd())
-        pdf_browse_btn = QPushButton("Browse")
-        pdf_browse_btn.clicked.connect(self.browse_pdf_dir)
-        hbox_pdf = QHBoxLayout()
-        hbox_pdf.addWidget(self.pdf_dir_edit)
-        hbox_pdf.addWidget(pdf_browse_btn)
-        export_layout.addRow("PDF Save Directory:", hbox_pdf)
-
-        excel_template_layout = QHBoxLayout()
-        self.excel_template_edit = QLineEdit()
-        self.excel_template_edit.setText(
-            get_app_setting("excel_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.xlsx"
-        )
-        excel_template_layout.addWidget(self.excel_template_edit)
-
-        self.excel_var_combo = QComboBox()
-        self.excel_var_combo.addItem("-- Insert variable --")
-        for label, placeholder in self.filename_vars:
-            self.excel_var_combo.addItem(label, placeholder)
-        self.excel_var_combo.currentIndexChanged.connect(self.on_excel_var_changed)
-        excel_template_layout.addWidget(self.excel_var_combo)
-        export_layout.addRow("Excel Filename Template:", excel_template_layout)
-
-        pdf_template_layout = QHBoxLayout()
-        self.pdf_template_edit = QLineEdit()
-        self.pdf_template_edit.setText(
-            get_app_setting("pdf_filename_template") or "summary_{{CustomerCompany}}_{{CalibrationDate}}.pdf"
-        )
-        pdf_template_layout.addWidget(self.pdf_template_edit)
-
-        self.pdf_var_combo = QComboBox()
-        self.pdf_var_combo.addItem("-- Insert variable --")
-        for label, placeholder in self.filename_vars:
-            self.pdf_var_combo.addItem(label, placeholder)
-        self.pdf_var_combo.currentIndexChanged.connect(self.on_pdf_var_changed)
-        pdf_template_layout.addWidget(self.pdf_var_combo)
-        export_layout.addRow("PDF Filename Template:", pdf_template_layout)
-
-        template_path_layout = QHBoxLayout()
-        self.template_path_edit = QLineEdit()
-        self.template_path_edit.setText(get_app_setting("summary_template_path") or "summary_template.xlsx")
-        template_browse_btn = QPushButton("Browse")
-        template_browse_btn.clicked.connect(self.browse_template_file)
-        template_path_layout.addWidget(self.template_path_edit)
-        template_path_layout.addWidget(template_browse_btn)
-        export_layout.addRow("Summary Template File:", template_path_layout)
-
-        # Envelope Export Settings
-        self.envelope_excel_checkbox = QCheckBox("Enable Envelope Excel Export")
-        self.envelope_excel_checkbox.setChecked(False)
-        export_layout.addRow("", self.envelope_excel_checkbox)
-
-        self.envelope_pdf_checkbox = QCheckBox("Enable Envelope PDF Export")
-        self.envelope_pdf_checkbox.setChecked(False)
-        export_layout.addRow("", self.envelope_pdf_checkbox)
-
-        self.envelope_excel_template_edit = QLineEdit()
-        self.envelope_excel_template_edit.setText(get_app_setting("envelope_excel_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.xlsx")
-        export_layout.addRow("Envelope Excel Filename Template:", self.envelope_excel_template_edit)
-
-        self.envelope_pdf_template_edit = QLineEdit()
-        self.envelope_pdf_template_edit.setText(get_app_setting("envelope_pdf_filename_template") or "envelope_{{CustomerCompany}}_{{CalibrationDate}}.pdf")
-        export_layout.addRow("Envelope PDF Filename Template:", self.envelope_pdf_template_edit)
-
-        envelope_template_layout = QHBoxLayout()
-        self.envelope_template_path_edit = QLineEdit()
-        self.envelope_template_path_edit.setText(get_app_setting("envelope_template_path") or "envelope_template.xlsx")
-        envelope_template_browse_btn = QPushButton("Browse")
-        envelope_template_browse_btn.clicked.connect(self.browse_envelope_template_file)
-        envelope_template_layout.addWidget(self.envelope_template_path_edit)
-        envelope_template_layout.addWidget(envelope_template_browse_btn)
-        export_layout.addRow("Envelope Template File:", envelope_template_layout)
-
-        save_export_btn = QPushButton("Save Export Settings")
-        save_export_btn.clicked.connect(self.save_export_settings)
-        export_layout.addWidget(save_export_btn)
-
-        self.export_settings_page.setLayout(export_layout)
-        self.settings_stacked.addWidget(self.export_settings_page)
-
-        # ---------------- API Settings Page ----------------
-        self.api_settings_page = QWidget()
-        api_layout = QFormLayout(self.api_settings_page)
-        self.laravel_url_edit = QLineEdit()
-        self.laravel_url_edit.setText(get_app_setting("laravel_app_url") or "https://dev.c-trac.app")
-        api_layout.addRow("Lavarel App URL:", self.laravel_url_edit)
-        self.laravel_token_edit = QLineEdit()
-        self.laravel_token_edit.setText(get_app_setting("laravel_api_token") or "")
-        api_layout.addRow("Lavarel API Token:", self.laravel_token_edit)
-        save_api_btn = QPushButton("Save API Settings")
-        save_api_btn.clicked.connect(self.save_api_settings)
-        api_layout.addWidget(save_api_btn)
-        self.api_settings_page.setLayout(api_layout)
-        self.settings_stacked.addWidget(self.api_settings_page)
-
-        # ---------------- Template Settings Page ----------------
-        self.template_settings_page = QWidget()
-        template_set_layout = QFormLayout(self.template_settings_page)
-        self.base_template_path_edit = QLineEdit()
-        self.base_template_path_edit.setText(get_app_setting("base_template_path") or os.getcwd())
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         template_set_layout.addRow("Base Template Save Path:", self.base_template_path_edit)
         create_template_btn = QPushButton("Create Base Template")
         create_template_btn.clicked.connect(self.create_base_template_action)
@@ -1856,7 +1277,6 @@ class ModernTorqueApp(QMainWindow):
         self.template_settings_page.setLayout(template_set_layout)
         self.settings_stacked.addWidget(self.template_settings_page)
 
-<<<<<<< HEAD
         # Unit Synonyms Settings Page
         self.unit_synonyms_page = QWidget()
         unit_synonyms_layout = QFormLayout(self.unit_synonyms_page)
@@ -1865,19 +1285,6 @@ class ModernTorqueApp(QMainWindow):
         self.in_lb_synonyms_edit = QLineEdit(get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs")
         unit_synonyms_layout.addRow("IN/LB Synonyms:", self.in_lb_synonyms_edit)
         self.nm_synonyms_edit = QLineEdit(get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.n.m.")
-=======
-        # ---------------- Unit Synonyms Settings Page ----------------
-        self.unit_synonyms_page = QWidget()
-        unit_synonyms_layout = QFormLayout(self.unit_synonyms_page)
-        self.ft_lb_synonyms_edit = QLineEdit()
-        self.ft_lb_synonyms_edit.setText(get_app_setting("synonyms_ft_lb") or "ft/lb,ft-lb,ft.lb,ft lb,ft/lbs,ft-lbs,ft.lbs,ft lbs")
-        unit_synonyms_layout.addRow("FT/LB Synonyms:", self.ft_lb_synonyms_edit)
-        self.in_lb_synonyms_edit = QLineEdit()
-        self.in_lb_synonyms_edit.setText(get_app_setting("synonyms_in_lb") or "in/lb,in-lb,in.lb,in lb,in/lbs,in-lbs,in.lbs,in lbs")
-        unit_synonyms_layout.addRow("IN/LB Synonyms:", self.in_lb_synonyms_edit)
-        self.nm_synonyms_edit = QLineEdit()
-        self.nm_synonyms_edit.setText(get_app_setting("synonyms_nm") or "nm,n.m,n*m,nm.,n.m.")
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         unit_synonyms_layout.addRow("NM Synonyms:", self.nm_synonyms_edit)
         save_unit_synonyms_btn = QPushButton("Save Unit Synonyms")
         save_unit_synonyms_btn.clicked.connect(self.save_unit_synonyms)
@@ -1888,33 +1295,9 @@ class ModernTorqueApp(QMainWindow):
         self.settings_tab.setLayout(layout)
         self.tab_widget.addTab(self.settings_tab, "Settings")
 
-<<<<<<< HEAD
     def on_settings_combo_changed(self, index):
         self.settings_stacked.setCurrentIndex(index)
 
-=======
-        self.load_torque_table_data()
-
-    def on_settings_combo_changed(self, index):
-        self.settings_stacked.setCurrentIndex(index)
-
-    def on_excel_var_changed(self, index):
-        if index <= 0:
-            return
-        var_str = self.excel_var_combo.itemData(index)
-        current_text = self.excel_template_edit.text()
-        self.excel_template_edit.setText(current_text + var_str)
-        self.excel_var_combo.setCurrentIndex(0)
-
-    def on_pdf_var_changed(self, index):
-        if index <= 0:
-            return
-        var_str = self.pdf_var_combo.itemData(index)
-        current_text = self.pdf_template_edit.text()
-        self.pdf_template_edit.setText(current_text + var_str)
-        self.pdf_var_combo.setCurrentIndex(0)
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def browse_excel_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Excel Save Directory")
         if directory:
@@ -1926,24 +1309,12 @@ class ModernTorqueApp(QMainWindow):
             self.pdf_dir_edit.setText(directory)
 
     def browse_template_file(self):
-<<<<<<< HEAD
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Summary Template", "", "Excel Files (*.xlsx);;All Files (*)")
-=======
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Summary Template", "", "Excel Files (*.xlsx);;All Files (*)"
-        )
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         if file_path:
             self.template_path_edit.setText(file_path)
 
     def browse_envelope_template_file(self):
-<<<<<<< HEAD
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Envelope Template", "", "Excel Files (*.xlsx);;All Files (*)")
-=======
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Envelope Template", "", "Excel Files (*.xlsx);;All Files (*)"
-        )
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
         if file_path:
             self.envelope_template_path_edit.setText(file_path)
 
@@ -1958,18 +1329,6 @@ class ModernTorqueApp(QMainWindow):
         set_app_setting("envelope_template_path", self.envelope_template_path_edit.text())
         QMessageBox.information(self, "Settings Saved", "Export settings have been saved.")
 
-<<<<<<< HEAD
-=======
-    def save_openai_settings(self):
-        set_app_setting("openai_api_key", self.api_key_edit.text())
-        set_app_setting("openai_model", self.model_combo.currentText())
-        set_app_setting("openai_temperature", str(self.temp_spin.value()))
-        set_app_setting("openai_top_p", str(self.top_p_spin.value()))
-        set_app_setting("openai_presence_penalty", str(self.presence_spin.value()))
-        set_app_setting("openai_frequency_penalty", str(self.freq_spin.value()))
-        QMessageBox.information(self, "Settings Saved", "OpenAI settings have been saved.")
-
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def save_api_settings(self):
         set_app_setting("laravel_app_url", self.laravel_url_edit.text())
         set_app_setting("laravel_api_token", self.laravel_token_edit.text())
@@ -2013,10 +1372,6 @@ class ModernTorqueApp(QMainWindow):
             QMessageBox.critical(self, "Template Creation Error", f"Error creating base template:\n{e}")
             return False
 
-<<<<<<< HEAD
-=======
-    # Load the main torque table data (Data Management tab)
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def load_torque_table_data(self):
         table_data = get_torque_table()
         self.torque_table_widget.setRowCount(len(table_data))
@@ -2026,15 +1381,6 @@ class ModernTorqueApp(QMainWindow):
             self.torque_table_widget.setItem(i, 2, QTableWidgetItem(row.get("type", "")))
             self.torque_table_widget.setItem(i, 3, QTableWidgetItem(row.get("applied_torq", "")))
 
-<<<<<<< HEAD
-=======
-    def toggle_extracted_data(self, state):
-        self.show_extracted_data = (state == Qt.CheckState.Checked)
-        self.extracted_data_label.setVisible(self.show_extracted_data)
-        self.extracted_data_table.setVisible(self.show_extracted_data)
-
-    # ------------------- CRUD for the TorqueTable entries -------------------
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     def add_entry(self):
         dialog = TorqueEntryDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -2080,7 +1426,6 @@ class ModernTorqueApp(QMainWindow):
         self.load_max_torque_dropdown()
         self.load_torque_table_data()
 
-<<<<<<< HEAD
     def toggle_extracted_data(self, state):
         self.show_extracted_data = (state == Qt.CheckState.Checked)
         self.extracted_data_label.setVisible(self.show_extracted_data)
@@ -2119,19 +1464,6 @@ if __name__ == "__main__":
     from PyQt6.QtWidgets import QApplication
     init_db()
     insert_default_torque_table_data()
-=======
-    def init_report_templates_tab(self):
-        """
-        This function should initialize the report templates tab (if desired).
-        Implementation not provided here.
-        """
-        pass
-
-# ------------------------------ MAIN ENTRY POINT ------------------------------
-if __name__ == "__main__":
-    import sys
-    from PyQt6.QtWidgets import QApplication
->>>>>>> 509230f044b983776b89a78277d1a0ef43a3d3c1
     app = QApplication(sys.argv)
     window = ModernTorqueApp()
     window.show()
