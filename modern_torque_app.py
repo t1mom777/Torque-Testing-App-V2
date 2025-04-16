@@ -781,12 +781,28 @@ class ModernTorqueApp(QMainWindow):
         asset_info = company_asset.get("additional_info_fields", {})
         max_torque_str = str(asset_info.get("max_torque", "")).strip()
         torque_unit_str = str(asset_info.get("torque_unit", "")).strip()
+        
+        # Updated normalization block for max torque extraction
+        extracted_val = None
+        extracted_unit = torque_unit_str
+
         if max_torque_str:
-            try:
-                extracted_val = float(max_torque_str)
-                self.auto_select_max_torque(extracted_val, torque_unit_str)
-            except ValueError:
-                pass
+            num_match = re.search(r"[\d\.]+", max_torque_str)
+            if num_match:
+                try:
+                    extracted_val = float(num_match.group())
+                except ValueError:
+                    extracted_val = None
+            if not extracted_unit:
+                unit_match = re.search(r"[\d\.]+\s*([a-zA-Z\/\-\.\s]+)", max_torque_str)
+                if unit_match:
+                    extracted_unit = unit_match.group(1).strip()
+
+        if extracted_unit:
+            extracted_unit = re.sub(r"[\d\.]", "", extracted_unit).strip()
+
+        if extracted_val is not None:
+            self.auto_select_max_torque(extracted_val, extracted_unit)
         company_id = company_asset.get("company_id")
         if company_id:
             company_response = self.get_company_info_from_api(company_id, token, laravel_url)
