@@ -778,11 +778,24 @@ class ModernTorqueApp(QMainWindow):
         self.manufacturer_edit.setText(company_asset.get("make", ""))
         self.model_edit.setText(company_asset.get("model", ""))
         self.serial_number_edit.setText(company_asset.get("serial_number", ""))
-        asset_info = company_asset.get("additional_info_fields", {})
-        max_torque_str = str(asset_info.get("max_torque", "")).strip()
-        torque_unit_str = str(asset_info.get("torque_unit", "")).strip()
         
-        # Updated normalization block for max torque extraction
+        # Retrieve 'additional_info_fields' which may be either a dict or a list.
+        asset_info = company_asset.get("additional_info_fields", {})
+
+        max_torque_str = ""
+        torque_unit_str = ""
+
+        if isinstance(asset_info, dict):
+            max_torque_str = str(asset_info.get("max_torque", "")).strip()
+            torque_unit_str = str(asset_info.get("torque_unit", "")).strip()
+        elif isinstance(asset_info, list):
+            for field_item in asset_info:
+                if isinstance(field_item, dict):
+                    if field_item.get("field_name") == "max_torque":
+                        max_torque_str = str(field_item.get("value", "")).strip()
+                    elif field_item.get("field_name") == "torque_unit":
+                        torque_unit_str = str(field_item.get("value", "")).strip()
+
         extracted_val = None
         extracted_unit = torque_unit_str
 
